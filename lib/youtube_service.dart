@@ -36,6 +36,18 @@ class YouTubeService {
             channelTitle: 'The Acoustic Club', 
             thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150',
           ),
+          Track(
+            id: '9FvvbVI5rY0', 
+            title: 'Acoustic Coffee Shop Guitar (Mock Track)', 
+            channelTitle: 'The Acoustic Club', 
+            thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150',
+          ),
+          Track(
+            id: '9FvvbVI5rY0', 
+            title: 'Acoustic Coffee Shop Guitar (Mock Track)', 
+            channelTitle: 'The Acoustic Club', 
+            thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150',
+          ),
         ];
       }
 

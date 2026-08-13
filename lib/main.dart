@@ -28,7 +28,7 @@ class _MusicAppState extends State<MusicApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'StreamPlayer',
+      title: 'Rhythmic',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: _activeTheme.background,
       ),
@@ -58,6 +58,7 @@ class _MainDashboardState extends State<MainDashboard> {
   final YouTubeService _apiService = YouTubeService();
   final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _searchController = TextEditingController();
+  final List<Track> _selectedForReorder = [];
   
   List<Track> _searchResults = [];
   List<Playlist> _myPlaylists = [];
@@ -267,6 +268,7 @@ class _MainDashboardState extends State<MainDashboard> {
 
       case 'playlist_detail':
         if (_selectedPlaylistDetail == null) return const Center(child: Text('No playlist selected'));
+        
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -278,11 +280,68 @@ class _MainDashboardState extends State<MainDashboard> {
                     icon: const Icon(Icons.arrow_back),
                     onPressed: () {
                       setState(() {
+                        _selectedForReorder.clear();
                         _currentView = 'playlists';
                       });
                     },
                   ),
-                  Text(_selectedPlaylistDetail!.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _selectedPlaylistDetail!.name,
+                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.edit, color: widget.activeTheme.primaryAccent, size: 28),
+                    tooltip: 'Edit Playlist Order',
+                    onPressed: () async {
+                      if (_selectedForReorder.isEmpty) return;
+
+                      setState(() {
+                        // Create a list for unselected tracks
+                        final unselected = _selectedPlaylistDetail!.tracks
+                            .where((t) => !_selectedForReorder.contains(t))
+                            .toList();
+
+                        // Place selected tracks first in order of selection, then append remaining tracks
+                        _selectedPlaylistDetail!.tracks.clear();
+                        _selectedPlaylistDetail!.tracks.addAll(_selectedForReorder);
+                        _selectedPlaylistDetail!.tracks.addAll(unselected);
+
+                        _selectedForReorder.clear();
+                      });
+
+                      await _playlistService.savePlaylists(_myPlaylists);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Playlist order updated!')),
+                        );
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.play_arrow_rounded, color: widget.activeTheme.primaryAccent, size: 28),
+                    tooltip: 'Play All',
+                    onPressed: () {
+                      if (_selectedPlaylistDetail!.tracks.isNotEmpty) {
+                        _playTrack(_selectedPlaylistDetail!.tracks.first);
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    tooltip: 'Delete Playlist',
+                    onPressed: () async {
+                      setState(() {
+                        _selectedForReorder.clear();
+                        _myPlaylists.remove(_selectedPlaylistDetail);
+                        _currentView = 'playlists';
+                      });
+                      await _playlistService.savePlaylists(_myPlaylists);
+                    },
+                  ),
                 ],
               ),
             ),
@@ -293,6 +352,9 @@ class _MainDashboardState extends State<MainDashboard> {
                       itemCount: _selectedPlaylistDetail!.tracks.length,
                       itemBuilder: (context, index) {
                         final track = _selectedPlaylistDetail!.tracks[index];
+                        final isSelected = _selectedForReorder.contains(track);
+                        final selectIndex = _selectedForReorder.indexOf(track) + 1;
+
                         return ListTile(
                           leading: ClipRRect(
                             borderRadius: BorderRadius.circular(4),
@@ -300,14 +362,35 @@ class _MainDashboardState extends State<MainDashboard> {
                           ),
                           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                           subtitle: Text(track.channelTitle),
-                          onTap: () => _playTrack(track),
+                          trailing: isSelected
+                              ? CircleAvatar(
+                                  radius: 14,
+                                  backgroundColor: widget.activeTheme.primaryAccent,
+                                  child: Text(
+                                    '$selectIndex',
+                                    style: TextStyle(
+                                      color: widget.activeTheme.surface,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                )
+                              : const Icon(Icons.circle_outlined, color: Colors.grey),
+                          onTap: () {
+                            setState(() {
+                              if (isSelected) {
+                                _selectedForReorder.remove(track);
+                              } else {
+                                _selectedForReorder.add(track);
+                              }
+                            });
+                          },
                         );
                       },
                     ),
             ),
           ],
         );
-
       case 'search':
       default:
         return Column(
