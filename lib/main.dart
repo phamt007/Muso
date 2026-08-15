@@ -58,15 +58,18 @@ class _MainDashboardState extends State<MainDashboard> {
   final YouTubeService _apiService = YouTubeService();
   final PlaylistService _playlistService = PlaylistService();
   final TextEditingController _searchController = TextEditingController();
-  final List<Track> _selectedForReorder = [];
-  
-  List<Track> _searchResults = [];
-  List<Playlist> _myPlaylists = [];
-  Track? _currentTrack;
-  YoutubePlayerController? _playerController;
 
+  YoutubePlayerController? _playerController;
+  List<Track> _searchResults = [];
   String _currentView = 'search'; 
+
   Playlist? _selectedPlaylistDetail;
+  List<Playlist> _myPlaylists = [];
+
+  bool _isEditingOrder = false;
+  final List<Track> _selectedForReorder = [];
+
+  Track? _currentTrack;
 
   @override
   void initState() {
@@ -268,7 +271,7 @@ class _MainDashboardState extends State<MainDashboard> {
 
       case 'playlist_detail':
         if (_selectedPlaylistDetail == null) return const Center(child: Text('No playlist selected'));
-        
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -280,6 +283,7 @@ class _MainDashboardState extends State<MainDashboard> {
                     icon: const Icon(Icons.arrow_back),
                     onPressed: () {
                       setState(() {
+                        _isEditingOrder = false;
                         _selectedForReorder.clear();
                         _currentView = 'playlists';
                       });
@@ -288,60 +292,90 @@ class _MainDashboardState extends State<MainDashboard> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      _selectedPlaylistDetail!.name,
+                      _isEditingOrder ? 'Select Order' : _selectedPlaylistDetail!.name,
                       style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  IconButton(
-                    icon: Icon(Icons.edit, color: widget.activeTheme.primaryAccent, size: 28),
-                    tooltip: 'Edit Playlist Order',
-                    onPressed: () async {
-                      if (_selectedForReorder.isEmpty) return;
 
-                      setState(() {
-                        // Create a list for unselected tracks
-                        final unselected = _selectedPlaylistDetail!.tracks
-                            .where((t) => !_selectedForReorder.contains(t))
-                            .toList();
+                  // === EDIT MODE ACTIVE: SHOW CONFIRM & CANCEL ===
+                  if (_isEditingOrder) ...[
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.grey, size: 26),
+                      tooltip: 'Cancel',
+                      onPressed: () {
+                        setState(() {
+                          _selectedForReorder.clear();
+                          _isEditingOrder = false;
+                        });
+                      },
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.check, color: widget.activeTheme.primaryAccent, size: 28),
+                      tooltip: 'Confirm Order',
+                      onPressed: () async {
+                        if (_selectedForReorder.isNotEmpty) {
+                          setState(() {
+                            final unselected = _selectedPlaylistDetail!.tracks
+                                .where((t) => !_selectedForReorder.contains(t))
+                                .toList();
 
-                        // Place selected tracks first in order of selection, then append remaining tracks
-                        _selectedPlaylistDetail!.tracks.clear();
-                        _selectedPlaylistDetail!.tracks.addAll(_selectedForReorder);
-                        _selectedPlaylistDetail!.tracks.addAll(unselected);
+                            _selectedPlaylistDetail!.tracks.clear();
+                            _selectedPlaylistDetail!.tracks.addAll(_selectedForReorder);
+                            _selectedPlaylistDetail!.tracks.addAll(unselected);
+                          });
 
-                        _selectedForReorder.clear();
-                      });
+                          await _playlistService.savePlaylists(_myPlaylists);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Playlist order updated!')),
+                            );
+                          }
+                        }
 
-                      await _playlistService.savePlaylists(_myPlaylists);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Playlist order updated!')),
-                        );
-                      }
-                    },
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.play_arrow_rounded, color: widget.activeTheme.primaryAccent, size: 28),
-                    tooltip: 'Play All',
-                    onPressed: () {
-                      if (_selectedPlaylistDetail!.tracks.isNotEmpty) {
-                        _playTrack(_selectedPlaylistDetail!.tracks.first);
-                      }
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                    tooltip: 'Delete Playlist',
-                    onPressed: () async {
-                      setState(() {
-                        _selectedForReorder.clear();
-                        _myPlaylists.remove(_selectedPlaylistDetail);
-                        _currentView = 'playlists';
-                      });
-                      await _playlistService.savePlaylists(_myPlaylists);
-                    },
-                  ),
+                        setState(() {
+                          _selectedForReorder.clear();
+                          _isEditingOrder = false;
+                        });
+                      },
+                    ),
+                  ]
+
+                  // === NORMAL MODE: SHOW EDIT, PLAY ALL, DELETE ===
+                  else ...[
+                    IconButton(
+                      icon: Icon(Icons.edit, color: widget.activeTheme.primaryAccent, size: 26),
+                      tooltip: 'Edit Playlist Order',
+                      onPressed: () {
+                        setState(() {
+                          _selectedForReorder.clear();
+                          _isEditingOrder = true;
+                        });
+                      },
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.play_arrow_rounded, color: widget.activeTheme.primaryAccent, size: 28),
+                      tooltip: 'Play All',
+                      onPressed: () {
+                        if (_selectedPlaylistDetail!.tracks.isNotEmpty) {
+                          _playTrack(_selectedPlaylistDetail!.tracks.first);
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                      tooltip: 'Delete Playlist',
+                      onPressed: () async {
+                        setState(() {
+                          _selectedForReorder.clear();
+                          _isEditingOrder = false;
+                          _myPlaylists.remove(_selectedPlaylistDetail);
+                          _currentView = 'playlists';
+                        });
+                        await _playlistService.savePlaylists(_myPlaylists);
+                      },
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -362,28 +396,37 @@ class _MainDashboardState extends State<MainDashboard> {
                           ),
                           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                           subtitle: Text(track.channelTitle),
-                          trailing: isSelected
-                              ? CircleAvatar(
-                                  radius: 14,
-                                  backgroundColor: widget.activeTheme.primaryAccent,
-                                  child: Text(
-                                    '$selectIndex',
-                                    style: TextStyle(
-                                      color: widget.activeTheme.surface,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                )
-                              : const Icon(Icons.circle_outlined, color: Colors.grey),
+                          // Only show the badges when in Edit Mode
+                          trailing: _isEditingOrder
+                              ? (isSelected
+                                  ? CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: widget.activeTheme.primaryAccent,
+                                      child: Text(
+                                        '$selectIndex',
+                                        style: TextStyle(
+                                          color: widget.activeTheme.surface,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    )
+                                  : const Icon(Icons.circle_outlined, color: Colors.grey))
+                              : null,
                           onTap: () {
-                            setState(() {
-                              if (isSelected) {
-                                _selectedForReorder.remove(track);
-                              } else {
-                                _selectedForReorder.add(track);
-                              }
-                            });
+                            if (_isEditingOrder) {
+                              // Reorder selection logic
+                              setState(() {
+                                if (isSelected) {
+                                  _selectedForReorder.remove(track);
+                                } else {
+                                  _selectedForReorder.add(track);
+                                }
+                              });
+                            } else {
+                              // Normal playback mode
+                              _playTrack(track);
+                            }
                           },
                         );
                       },
