@@ -132,6 +132,9 @@ class _MainDashboardState extends State<MainDashboard> {
     showModalBottomSheet(
       context: context,
       backgroundColor: widget.activeTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (context) {
         return Container(
           padding: const EdgeInsets.all(16),
@@ -139,25 +142,63 @@ class _MainDashboardState extends State<MainDashboard> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Add to Playlist', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(
+                'Add to Playlist',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 10),
               _myPlaylists.isEmpty
                   ? const Padding(
                       padding: EdgeInsets.symmetric(vertical: 20),
-                      child: Text('No playlists created yet.', style: TextStyle(color: Colors.grey)),
+                      child: Text(
+                        'No playlists created yet.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
                     )
                   : ListView.builder(
                       shrinkWrap: true,
                       itemCount: _myPlaylists.length,
                       itemBuilder: (context, index) {
                         final playlist = _myPlaylists[index];
+                        // Check if this track is already in the playlist by its unique ID
+                        final bool isAlreadyAdded = playlist.tracks.any((t) => t.id == track.id);
+
                         return ListTile(
-                          leading: Icon(Icons.playlist_add, color: widget.activeTheme.primaryAccent),
-                          title: Text(playlist.name),
-                          onTap: () {
-                            Navigator.pop(context);
-                            _addTrackToPlaylist(track, playlist);
-                          },
+                          enabled: !isAlreadyAdded,
+                          leading: Icon(
+                            Icons.playlist_add,
+                            color: isAlreadyAdded
+                                ? widget.activeTheme.textSecondary.withOpacity(0.5)
+                                : widget.activeTheme.primaryAccent,
+                          ),
+                          title: Text(
+                            playlist.name,
+                            style: TextStyle(
+                              color: isAlreadyAdded
+                                  ? widget.activeTheme.textSecondary
+                                  : widget.activeTheme.textPrimary,
+                            ),
+                          ),
+                          subtitle: isAlreadyAdded
+                              ? const Text(
+                                  'Already in playlist',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                                )
+                              : null,
+                          // Checkmark on the right side indicating presence
+                          trailing: isAlreadyAdded
+                              ? Icon(
+                                  Icons.check_circle,
+                                  color: widget.activeTheme.primaryAccent,
+                                  size: 22,
+                                )
+                              : null,
+                          onTap: isAlreadyAdded
+                              ? null // Disables click functionality
+                              : () {
+                                  Navigator.pop(context);
+                                  _addTrackToPlaylist(track, playlist);
+                                },
                         );
                       },
                     ),
@@ -197,6 +238,81 @@ class _MainDashboardState extends State<MainDashboard> {
                 _createNewPlaylist(nameController.text);
                 Navigator.pop(context);
               },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showDeletePlaylistDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: widget.activeTheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: const Text(
+            'Delete Playlist',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: Text(
+            'Are you sure you want to delete "${_selectedPlaylistDetail?.name}"? This action cannot be undone.',
+            style: TextStyle(color: widget.activeTheme.textSecondary),
+          ),
+          actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          actions: [
+            Row(
+              children: [
+                // Cancel Button Box
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: widget.activeTheme.searchBar,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(color: widget.activeTheme.textPrimary),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Confirm Button Box
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+                    ),
+                    child: TextButton(
+                      onPressed: () async {
+                        Navigator.pop(dialogContext); // Close the dialog
+                        setState(() {
+                          _selectedForReorder.clear();
+                          _isEditingOrder = false;
+                          _myPlaylists.remove(_selectedPlaylistDetail);
+                          _currentView = 'playlists';
+                        });
+                        await _playlistService.savePlaylists(_myPlaylists);
+                      },
+                      child: const Text(
+                        'Confirm',
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         );
@@ -365,15 +481,7 @@ class _MainDashboardState extends State<MainDashboard> {
                     IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                       tooltip: 'Delete Playlist',
-                      onPressed: () async {
-                        setState(() {
-                          _selectedForReorder.clear();
-                          _isEditingOrder = false;
-                          _myPlaylists.remove(_selectedPlaylistDetail);
-                          _currentView = 'playlists';
-                        });
-                        await _playlistService.savePlaylists(_myPlaylists);
-                      },
+                      onPressed: () => _showDeletePlaylistDialog(context),
                     ),
                   ],
                 ],
@@ -543,8 +651,7 @@ drawer: Drawer(
                 },
               ),
               const Divider(color: Colors.grey),
-              
-// === INLINE EXPANDABLE THEME SELECTION BOX ===
+
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
                 child: Container(
