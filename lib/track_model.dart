@@ -11,13 +11,20 @@ class Track {
     required this.thumbnailUrl,
   });
 
-  // Converts YouTube API's complex JSON response into our simple Track object
   factory Track.fromJson(Map<String, dynamic> json) {
+    // YouTube search endpoint nests video ID inside an object: {"id": {"videoId": "..."}}
+    final idData = json['id'];
+    final String videoId = idData is Map<String, dynamic> ? (idData['videoId'] ?? '') : json['id'] ?? '';
+
+    final snippet = json['snippet'] ?? {};
+    final thumbnails = snippet['thumbnails'] ?? {};
+    final highRes = thumbnails['high'] ?? thumbnails['medium'] ?? thumbnails['default'] ?? {};
+
     return Track(
-      id: json['id']['videoId'] ?? '',
-      title: json['snippet']['title'] ?? 'Unknown Title',
-      channelTitle: json['snippet']['channelTitle'] ?? 'Unknown Artist',
-      thumbnailUrl: json['snippet']['thumbnails']['medium']['url'] ?? '',
+      id: videoId,
+      title: snippet['title'] ?? 'Unknown Title',
+      channelTitle: snippet['channelTitle'] ?? 'Unknown Artist',
+      thumbnailUrl: highRes['url'] ?? '',
     );
   }
 }

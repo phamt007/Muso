@@ -1,6 +1,6 @@
 
 import 'package:flutter/material.dart';
-import 'package:youtube_player_flutter/youtube_player_flutter.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import 'youtube_service.dart';
 import 'track_model.dart';
 import 'app_colors.dart';
@@ -117,15 +117,24 @@ class _MainDashboardState extends State<MainDashboard> {
   void _playTrack(Track track) {
     setState(() {
       _currentTrack = track;
-      if (_playerController != null) {
-        _playerController!.load(track.id);
-      } else {
+      if (_playerController == null) {
         _playerController = YoutubePlayerController(
-          initialVideoId: track.id,
-          flags: const YoutubePlayerFlags(autoPlay: true, mute: false),
+          params: const YoutubePlayerParams(
+            showControls: false,
+            showFullscreenButton: false,
+            mute: false,
+          ),
         );
       }
+      _playerController!.loadVideoById(videoId: track.id);
     });
+    _openFullPlayerScreen();
+  }
+
+  String _formatDuration(Duration duration) {
+  final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
   }
 
   void _showPlaylistSelector(Track track) {
@@ -321,6 +330,7 @@ class _MainDashboardState extends State<MainDashboard> {
   }
 
   void _showThemeSelector(BuildContext context) {
+    
     showModalBottomSheet(
       context: context,
       backgroundColor: widget.activeTheme.surface,
@@ -359,6 +369,213 @@ class _MainDashboardState extends State<MainDashboard> {
               ),
             ],
           ),
+        );
+      },
+    );
+  }
+
+  void _openFullPlayerScreen() {
+    if (_currentTrack == null || _playerController == null) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      enableDrag: true,
+      backgroundColor: widget.activeTheme.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (bottomSheetContext) {
+        return YoutubePlayerScaffold(
+          controller: _playerController!,
+          builder: (context, player) {
+            return StatefulBuilder(
+              builder: (context, setModalState) {
+                return FutureBuilder<double>(
+                  future: _playerController!.currentTime,
+                  builder: (context, timeSnap) {
+                    return FutureBuilder<Duration>(
+                      future: _playerController!.duration,
+                      builder: (context, durSnap) {
+                        final currentSec = timeSnap.data ?? 0.0;
+                        final duration = durSnap.data ?? Duration.zero;
+                        final maxSec = duration.inSeconds > 0 ? duration.inSeconds.toDouble() : 1.0;
+                        final clampedSec = currentSec.clamp(0.0, maxSec);
+
+                        return FractionallySizedBox(
+                          heightFactor: 0.94,
+                          child: SafeArea(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+                              child: Column(
+                                children: [
+                                  // Drag Bar
+                                  Center(
+                                    child: Container(
+                                      width: 40,
+                                      height: 5,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[600],
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  ),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.keyboard_arrow_down, size: 30),
+                                      onPressed: () => Navigator.pop(context),
+                                    ),
+                                  ),
+                                  const Spacer(),
+
+                                  // Album Art
+                                  Container(
+                                    width: double.infinity,
+                                    constraints: const BoxConstraints(maxHeight: 300),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(20),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: widget.activeTheme.primaryAccent.withOpacity(0.2),
+                                          blurRadius: 20,
+                                          offset: const Offset(0, 8),
+                                        ),
+                                      ],
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: AspectRatio(
+                                        aspectRatio: 1,
+                                        child: Image.network(
+                                          _currentTrack!.thumbnailUrl,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 24),
+
+                                  // Title & Channel
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      _currentTrack!.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      _currentTrack!.channelTitle,
+                                      style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 15),
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 16),
+
+                                  // Progress Slider
+                                  SliderTheme(
+                                    data: SliderTheme.of(context).copyWith(
+                                      trackHeight: 4.0,
+                                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
+                                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
+                                      activeTrackColor: widget.activeTheme.primaryAccent,
+                                      inactiveTrackColor: widget.activeTheme.searchBar,
+                                      thumbColor: widget.activeTheme.primaryAccent,
+                                    ),
+                                    child: Slider(
+                                      value: clampedSec,
+                                      min: 0.0,
+                                      max: maxSec,
+                                      onChanged: (val) {
+                                        _playerController!.seekTo(seconds: val, allowSeekAhead: true);
+                                        setModalState(() {});
+                                      },
+                                    ),
+                                  ),
+
+                                  // Timers
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          _formatDuration(Duration(seconds: clampedSec.toInt())),
+                                          style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 12),
+                                        ),
+                                        Text(
+                                          _formatDuration(duration),
+                                          style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 12),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  const Spacer(),
+
+                                  // Controls
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                    children: [
+                                      IconButton(
+                                        iconSize: 36,
+                                        icon: const Icon(Icons.skip_previous),
+                                        onPressed: () {},
+                                      ),
+                                      CircleAvatar(
+                                        radius: 34,
+                                        backgroundColor: widget.activeTheme.primaryAccent,
+                                        child: IconButton(
+                                          iconSize: 34,
+                                          color: widget.activeTheme.background,
+                                          icon: const Icon(Icons.play_circle_fill),
+                                          onPressed: () async {
+                                            final state = await _playerController!.playerState;
+                                            if (state == PlayerState.playing) {
+                                              await _playerController!.pauseVideo();
+                                            } else {
+                                              await _playerController!.playVideo();
+                                            }
+                                            setModalState(() {});
+                                          },
+                                        ),
+                                      ),
+                                      IconButton(
+                                        iconSize: 36,
+                                        icon: const Icon(Icons.skip_next),
+                                        onPressed: () {},
+                                      ),
+                                    ],
+                                  ),
+                                  const Spacer(),
+
+                                  // Player Element
+                                  SizedBox(
+                                    width: 1,
+                                    height: 1,
+                                    child: Opacity(
+                                      opacity: 0.01,
+                                      child: player,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -711,41 +928,61 @@ drawer: Drawer(
         children: [
           Expanded(child: _buildBody()),
           if (_currentTrack != null && _playerController != null)
-            Container(
-              color: widget.activeTheme.surface,
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 80,
-                    height: 45,
-                    child: YoutubePlayer(
+            GestureDetector(
+              onTap: _openFullPlayerScreen,
+              child: Container(
+                color: widget.activeTheme.surface,
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.network(
+                        _currentTrack!.thumbnailUrl,
+                        width: 50,
+                        height: 45,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _currentTrack!.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            _currentTrack!.channelTitle,
+                            style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    YoutubeValueBuilder(
                       controller: _playerController!,
-                      showVideoProgressIndicator: false,
+                      builder: (context, value) {
+                        final isPlaying = value.playerState == PlayerState.playing;
+                        return IconButton(
+                          icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+                          onPressed: () {
+                            if (isPlaying) {
+                              _playerController!.pauseVideo();
+                            } else {
+                              _playerController!.playVideo();
+                            }
+                          },
+                        );
+                      },
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_currentTrack!.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text(_currentTrack!.channelTitle, style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.pause),
-                    onPressed: () => _playerController!.pause(),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.play_arrow),
-                    onPressed: () => _playerController!.play(),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            )
+            ),
         ],
       ),
     );

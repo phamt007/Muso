@@ -5,7 +5,7 @@ import 'track_model.dart';
 class YouTubeService {
   // PASTE YOUR GOOGLE CLOUD YOUTUBE API KEY HERE
   final String _apiKey = 'AIzaSyASUKO5DWO1h1nKW6WMYYq6ZaCVtDumbsw'; 
-  final bool debugMode = true; 
+  final bool debugMode = false; 
 
     // In-memory cache map to store previous search queries
     final Map<String, List<Track>> _searchCache = {};
