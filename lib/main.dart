@@ -1,4 +1,5 @@
-
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import 'youtube_service.dart';
@@ -6,7 +7,6 @@ import 'track_model.dart';
 import 'app_colors.dart';
 import 'playlist_model.dart';
 import 'playlist_service.dart';
-import 'dart:async';
 
 void main() => runApp(const MusicApp());
 
@@ -30,6 +30,7 @@ class _MusicAppState extends State<MusicApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Rhythmic',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: _activeTheme.background,
       ),
@@ -71,13 +72,20 @@ class _MainDashboardState extends State<MainDashboard> {
   final List<Track> _selectedForReorder = [];
 
   Track? _currentTrack;
+  
+  // Playlist & Media Control State
+  Playlist? _activePlaylist;
+  bool _isLooping = false;
+  bool _isShuffling = false;
+  
+  PlayerState _lastPlayerState = PlayerState.unknown;
+  Timer? _mainTicker;
 
   @override
   void initState() {
     super.initState();
     _loadSavedPlaylists();
 
-    // Initialize the iframe controller once at app start
     _playerController = YoutubePlayerController(
       params: const YoutubePlayerParams(
         showControls: false,
@@ -85,16 +93,101 @@ class _MainDashboardState extends State<MainDashboard> {
         mute: false,
       ),
     );
+
+    // Reliable background ticker to check when a song finishes
+    _startBackgroundStateWatcher();
   }
 
-  void _playTrack(Track track) {
+  void _startBackgroundStateWatcher() {
+    _mainTicker = Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      if (!mounted || _playerController == null) return;
+
+      try {
+        final state = await _playerController!.playerState;
+        if (mounted) {
+          if (state == PlayerState.ended && _lastPlayerState != PlayerState.ended) {
+            _handleTrackEnded();
+          }
+          _lastPlayerState = state;
+        }
+      } catch (e) {
+        // Ignore iframe communication errors while loading
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _mainTicker?.cancel();
+    _playerController?.close();
+    super.dispose();
+  }
+
+  void _handleTrackEnded() {
+    if (_isLooping) {
+      _playerController!.seekTo(seconds: 0.0);
+      _playerController!.playVideo();
+      return;
+    }
+
+    if (_activePlaylist != null && _currentTrack != null) {
+      _playNextTrack();
+    }
+  }
+
+  void _playNextTrack() {
+    if (_activePlaylist == null || _currentTrack == null) return;
+    final tracks = _activePlaylist!.tracks;
+    if (tracks.isEmpty) return;
+
+    if (_isShuffling) {
+      final random = Random();
+      Track nextTrack = tracks[random.nextInt(tracks.length)];
+      // Prevent repeating the exact same track twice in a row during shuffle
+      if (tracks.length > 1 && nextTrack.id == _currentTrack!.id) {
+        int idx;
+        do {
+          idx = random.nextInt(tracks.length);
+        } while (tracks[idx].id == _currentTrack!.id);
+        nextTrack = tracks[idx];
+      }
+      _playTrack(nextTrack, playlist: _activePlaylist, showScreen: false);
+    } else {
+      int currentIndex = tracks.indexWhere((t) => t.id == _currentTrack!.id);
+      if (currentIndex != -1 && currentIndex < tracks.length - 1) {
+        _playTrack(tracks[currentIndex + 1], playlist: _activePlaylist, showScreen: false);
+      } else {
+        // Loop back to the start of the playlist when hitting the end
+        _playTrack(tracks.first, playlist: _activePlaylist, showScreen: false);
+      }
+    }
+  }
+
+  void _playPreviousTrack() {
+    if (_activePlaylist == null || _currentTrack == null) return;
+    final tracks = _activePlaylist!.tracks;
+    if (tracks.isEmpty) return;
+
+    int currentIndex = tracks.indexWhere((t) => t.id == _currentTrack!.id);
+    if (currentIndex > 0) {
+      _playTrack(tracks[currentIndex - 1], playlist: _activePlaylist, showScreen: false);
+    } else {
+      _playTrack(tracks.last, playlist: _activePlaylist, showScreen: false);
+    }
+  }
+
+  void _playTrack(Track track, {Playlist? playlist, bool showScreen = true}) {
     setState(() {
       _currentTrack = track;
+      _activePlaylist = playlist;
     });
 
     _playerController?.loadVideoById(videoId: track.id);
     _playerController?.playVideo();
-    _openFullPlayerScreen();
+    
+    if (showScreen) {
+      _openFullPlayerScreen();
+    }
   }
 
   void _loadSavedPlaylists() async {
@@ -135,9 +228,9 @@ class _MainDashboardState extends State<MainDashboard> {
   }
 
   String _formatDuration(Duration duration) {
-  final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-  return '$minutes:$seconds';
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 
   void _showPlaylistSelector(Track track) {
@@ -172,7 +265,6 @@ class _MainDashboardState extends State<MainDashboard> {
                       itemCount: _myPlaylists.length,
                       itemBuilder: (context, index) {
                         final playlist = _myPlaylists[index];
-                        // Check if this track is already in the playlist by its unique ID
                         final bool isAlreadyAdded = playlist.tracks.any((t) => t.id == track.id);
 
                         return ListTile(
@@ -197,7 +289,6 @@ class _MainDashboardState extends State<MainDashboard> {
                                   style: TextStyle(fontSize: 12, color: Colors.grey),
                                 )
                               : null,
-                          // Checkmark on the right side indicating presence
                           trailing: isAlreadyAdded
                               ? Icon(
                                   Icons.check_circle,
@@ -206,7 +297,7 @@ class _MainDashboardState extends State<MainDashboard> {
                                 )
                               : null,
                           onTap: isAlreadyAdded
-                              ? null // Disables click functionality
+                              ? null 
                               : () {
                                   Navigator.pop(context);
                                   _addTrackToPlaylist(track, playlist);
@@ -278,7 +369,6 @@ class _MainDashboardState extends State<MainDashboard> {
           actions: [
             Row(
               children: [
-                // Cancel Button Box
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
@@ -295,7 +385,6 @@ class _MainDashboardState extends State<MainDashboard> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // Confirm Button Box
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
@@ -305,7 +394,7 @@ class _MainDashboardState extends State<MainDashboard> {
                     ),
                     child: TextButton(
                       onPressed: () async {
-                        Navigator.pop(dialogContext); // Close the dialog
+                        Navigator.pop(dialogContext);
                         setState(() {
                           _selectedForReorder.clear();
                           _isEditingOrder = false;
@@ -333,7 +422,6 @@ class _MainDashboardState extends State<MainDashboard> {
   }
 
   void _showThemeSelector(BuildContext context) {
-    
     showModalBottomSheet(
       context: context,
       backgroundColor: widget.activeTheme.surface,
@@ -391,13 +479,21 @@ class _MainDashboardState extends State<MainDashboard> {
       builder: (bottomSheetContext) {
         return FullPlayerModalContent(
           controller: _playerController!,
-          track: _currentTrack!,
+          getTrack: () => _currentTrack!, // Passed dynamically so the UI updates on next/previous
           activeTheme: widget.activeTheme,
           formatDuration: _formatDuration,
+          hasPlaylist: _activePlaylist != null,
+          isLooping: _isLooping,
+          isShuffling: _isShuffling,
+          onToggleLoop: (val) => setState(() => _isLooping = val),
+          onToggleShuffle: (val) => setState(() => _isShuffling = val),
+          onSkipNext: _activePlaylist != null ? _playNextTrack : null,
+          onSkipPrevious: _activePlaylist != null ? _playPreviousTrack : null,
         );
       },
     );
   }
+
   Widget _buildBody() {
     switch (_currentView) {
       case 'playlists':
@@ -448,7 +544,6 @@ class _MainDashboardState extends State<MainDashboard> {
                     ),
                   ),
 
-                  // === EDIT MODE ACTIVE: SHOW CONFIRM & CANCEL ===
                   if (_isEditingOrder) ...[
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.grey, size: 26),
@@ -489,10 +584,7 @@ class _MainDashboardState extends State<MainDashboard> {
                         });
                       },
                     ),
-                  ]
-
-                  // === NORMAL MODE: SHOW EDIT, PLAY ALL, DELETE ===
-                  else ...[
+                  ] else ...[
                     IconButton(
                       icon: Icon(Icons.edit, color: widget.activeTheme.primaryAccent, size: 26),
                       tooltip: 'Edit Playlist Order',
@@ -508,7 +600,7 @@ class _MainDashboardState extends State<MainDashboard> {
                       tooltip: 'Play All',
                       onPressed: () {
                         if (_selectedPlaylistDetail!.tracks.isNotEmpty) {
-                          _playTrack(_selectedPlaylistDetail!.tracks.first);
+                          _playTrack(_selectedPlaylistDetail!.tracks.first, playlist: _selectedPlaylistDetail);
                         }
                       },
                     ),
@@ -538,7 +630,6 @@ class _MainDashboardState extends State<MainDashboard> {
                           ),
                           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                           subtitle: Text(track.channelTitle),
-                          // Only show the badges when in Edit Mode
                           trailing: _isEditingOrder
                               ? (isSelected
                                   ? CircleAvatar(
@@ -557,7 +648,6 @@ class _MainDashboardState extends State<MainDashboard> {
                               : null,
                           onTap: () {
                             if (_isEditingOrder) {
-                              // Reorder selection logic
                               setState(() {
                                 if (isSelected) {
                                   _selectedForReorder.remove(track);
@@ -566,8 +656,7 @@ class _MainDashboardState extends State<MainDashboard> {
                                 }
                               });
                             } else {
-                              // Normal playback mode
-                              _playTrack(track);
+                              _playTrack(track, playlist: _selectedPlaylistDetail);
                             }
                           },
                         );
@@ -614,7 +703,7 @@ class _MainDashboardState extends State<MainDashboard> {
                       icon: Icon(Icons.add_circle_outline, color: widget.activeTheme.primaryAccent),
                       onPressed: () => _showPlaylistSelector(track),
                     ),
-                    onTap: () => _playTrack(track),
+                    onTap: () => _playTrack(track, playlist: null),
                   );
                 },
               ),
@@ -626,7 +715,6 @@ class _MainDashboardState extends State<MainDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    // Ensure controller exists so Scaffold never fails
     _playerController ??= YoutubePlayerController(
       params: const YoutubePlayerParams(
         showControls: false,
@@ -753,7 +841,6 @@ class _MainDashboardState extends State<MainDashboard> {
           ),
           body: Stack(
             children: [
-              // Hidden persistent player element keeping audio feed connected
               Positioned(
                 left: 0,
                 top: 0,
@@ -786,16 +873,30 @@ class _MainDashboardState extends State<MainDashboard> {
 
 class FullPlayerModalContent extends StatefulWidget {
   final YoutubePlayerController controller;
-  final Track track;
+  final Track Function() getTrack;
   final AppColors activeTheme;
   final String Function(Duration) formatDuration;
+  final bool hasPlaylist;
+  final bool isLooping;
+  final bool isShuffling;
+  final ValueChanged<bool> onToggleLoop;
+  final ValueChanged<bool> onToggleShuffle;
+  final VoidCallback? onSkipNext;
+  final VoidCallback? onSkipPrevious;
 
   const FullPlayerModalContent({
     super.key,
     required this.controller,
-    required this.track,
+    required this.getTrack,
     required this.activeTheme,
     required this.formatDuration,
+    required this.hasPlaylist,
+    required this.isLooping,
+    required this.isShuffling,
+    required this.onToggleLoop,
+    required this.onToggleShuffle,
+    this.onSkipNext,
+    this.onSkipPrevious,
   });
 
   @override
@@ -803,16 +904,23 @@ class FullPlayerModalContent extends StatefulWidget {
 }
 
 class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
+  late Track _localTrack;
   double _currentSeconds = 0.0;
   Duration _duration = Duration.zero;
   bool _isDragging = false;
   double _dragValue = 0.0;
   bool _isPlaying = true;
+  
+  late bool _localIsLooping;
+  late bool _localIsShuffling;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
+    _localTrack = widget.getTrack();
+    _localIsLooping = widget.isLooping;
+    _localIsShuffling = widget.isShuffling;
     _startSyncTimer();
   }
 
@@ -824,13 +932,20 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
       final dur = await widget.controller.duration;
       final state = await widget.controller.playerState;
 
-      // ONLY update the UI if the song has actually loaded a valid duration
-      if (mounted && dur > 0) {
+      // Update the UI dynamically if the track changed via external methods/autoplay
+      final latestTrack = widget.getTrack();
+
+      if (mounted) {
         setState(() {
-          if (!_isDragging) {
+          if (latestTrack.id != _localTrack.id) {
+            _localTrack = latestTrack;
+          }
+          if (!_isDragging && dur > 0) {
             _currentSeconds = curTime;
           }
-          _duration = Duration(milliseconds: (dur * 1000).round());
+          if (dur > 0) {
+            _duration = Duration(milliseconds: (dur * 1000).round());
+          }
           _isPlaying = (state == PlayerState.playing);
         });
       }
@@ -875,7 +990,6 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
               ),
               const Spacer(),
 
-              // Album Art
               Container(
                 width: double.infinity,
                 constraints: const BoxConstraints(maxHeight: 300),
@@ -894,7 +1008,7 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                   child: AspectRatio(
                     aspectRatio: 1,
                     child: Image.network(
-                      widget.track.thumbnailUrl,
+                      _localTrack.thumbnailUrl,
                       fit: BoxFit.cover,
                     ),
                   ),
@@ -906,7 +1020,7 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  widget.track.title,
+                  _localTrack.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
@@ -916,7 +1030,7 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  widget.track.channelTitle,
+                  _localTrack.channelTitle,
                   style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 15),
                 ),
               ),
@@ -979,11 +1093,26 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
+                  // SHUFFLE BUTTON
+                  IconButton(
+                    iconSize: 28,
+                    icon: const Icon(Icons.shuffle),
+                    color: widget.hasPlaylist 
+                        ? (_localIsShuffling ? widget.activeTheme.primaryAccent : Colors.grey)
+                        : Colors.grey.withOpacity(0.3),
+                    onPressed: widget.hasPlaylist ? () {
+                      setState(() => _localIsShuffling = !_localIsShuffling);
+                      widget.onToggleShuffle(_localIsShuffling);
+                    } : null,
+                  ),
+                  // PREVIOUS TRACK
                   IconButton(
                     iconSize: 36,
                     icon: const Icon(Icons.skip_previous),
-                    onPressed: () {},
+                    color: widget.hasPlaylist ? Colors.white : Colors.grey.withOpacity(0.3),
+                    onPressed: widget.onSkipPrevious,
                   ),
+                  // PLAY/PAUSE
                   CircleAvatar(
                     radius: 34,
                     backgroundColor: widget.activeTheme.primaryAccent,
@@ -992,7 +1121,6 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                       color: widget.activeTheme.background,
                       icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
                       onPressed: () async {
-                        // Let the controller handle state updates cleanly
                         if (_isPlaying) {
                           await widget.controller.pauseVideo();
                         } else {
@@ -1001,10 +1129,22 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                       },
                     ),
                   ),
+                  // NEXT TRACK
                   IconButton(
                     iconSize: 36,
                     icon: const Icon(Icons.skip_next),
-                    onPressed: () {},
+                    color: widget.hasPlaylist ? Colors.white : Colors.grey.withOpacity(0.3),
+                    onPressed: widget.onSkipNext,
+                  ),
+                  // LOOP TRACK
+                  IconButton(
+                    iconSize: 28,
+                    icon: const Icon(Icons.loop),
+                    color: _localIsLooping ? widget.activeTheme.primaryAccent : Colors.grey,
+                    onPressed: () {
+                      setState(() => _localIsLooping = !_localIsLooping);
+                      widget.onToggleLoop(_localIsLooping);
+                    },
                   ),
                 ],
               ),
@@ -1055,7 +1195,6 @@ class _MiniPlayerState extends State<MiniPlayer> {
       final dur = await widget.controller.duration;
       final state = await widget.controller.playerState;
 
-      // Block divided-by-zero jumps during song switching
       if (mounted && dur > 0) {
         setState(() {
           _currentSeconds = curTime;
