@@ -81,6 +81,8 @@ class _MainDashboardState extends State<MainDashboard> {
   PlayerState _lastPlayerState = PlayerState.unknown;
   Timer? _mainTicker;
 
+  double _globalVolume = 100.0;
+
   @override
   void initState() {
     super.initState();
@@ -520,11 +522,13 @@ class _MainDashboardState extends State<MainDashboard> {
           hasPlaylist: _activePlaylist != null,
           isLooping: _isLooping,
           isShuffling: _isShuffling,
+          // NEW: Pass the global volume down, and update it when changed!
+          currentVolume: _globalVolume,
+          onVolumeChanged: (val) => setState(() => _globalVolume = val),
           onToggleLoop: (val) => setState(() => _isLooping = val),
           onToggleShuffle: (val) => setState(() => _isShuffling = val),
           onSkipNext: _activePlaylist != null ? _playNextTrack : null,
           onSkipPrevious: _activePlaylist != null ? _playPreviousTrack : null,
-          // NEW: Pass the playlist function down to the modal
           onAddToPlaylist: () => _showPlaylistSelector(_currentTrack!), 
         );
       },
@@ -918,11 +922,13 @@ class FullPlayerModalContent extends StatefulWidget {
   final bool hasPlaylist;
   final bool isLooping;
   final bool isShuffling;
+  final double currentVolume;               
+  final ValueChanged<double> onVolumeChanged; 
   final ValueChanged<bool> onToggleLoop;
   final ValueChanged<bool> onToggleShuffle;
   final VoidCallback? onSkipNext;
   final VoidCallback? onSkipPrevious;
-  final VoidCallback? onAddToPlaylist; // <--- ADD THIS
+  final VoidCallback? onAddToPlaylist;
 
   const FullPlayerModalContent({
     super.key,
@@ -933,11 +939,13 @@ class FullPlayerModalContent extends StatefulWidget {
     required this.hasPlaylist,
     required this.isLooping,
     required this.isShuffling,
+    required this.currentVolume,               
+    required this.onVolumeChanged,            
     required this.onToggleLoop,
     required this.onToggleShuffle,
     this.onSkipNext,
     this.onSkipPrevious,
-    this.onAddToPlaylist, // <--- ADD THIS
+    this.onAddToPlaylist,
   });
 
   @override
@@ -951,8 +959,8 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
   bool _isDragging = false;
   double _dragValue = 0.0;
   bool _isPlaying = true;
-  double _currentVolume = 100.0; // Added Volume State
   
+  late double _localVolume;
   late bool _localIsLooping;
   late bool _localIsShuffling;
   Timer? _timer;
@@ -963,6 +971,7 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
     _localTrack = widget.getTrack();
     _localIsLooping = widget.isLooping;
     _localIsShuffling = widget.isShuffling;
+    _localVolume = widget.currentVolume;
     _startSyncTimer();
   }
 
@@ -1175,7 +1184,7 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                   child: Row(
                     children: [
                       Icon(
-                        _currentVolume == 0 ? Icons.volume_off : Icons.volume_down,
+                        _localVolume == 0 ? Icons.volume_off : Icons.volume_down,
                         color: widget.activeTheme.textSecondary,
                         size: 20,
                       ),
@@ -1190,14 +1199,15 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                             thumbColor: widget.activeTheme.textPrimary,
                           ),
                           child: Slider(
-                            value: _currentVolume,
+                            value: _localVolume, // <-- Change to _localVolume
                             min: 0.0,
                             max: 100.0,
                             onChanged: (val) {
                               setState(() {
-                                _currentVolume = val;
+                                _localVolume = val; // <-- Change to _localVolume
                               });
                               widget.controller.setVolume(val.round()); 
+                              widget.onVolumeChanged(val); // <-- Sync back to main dashboard
                             },
                           ),
                         ),
