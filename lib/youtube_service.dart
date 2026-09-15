@@ -58,10 +58,18 @@ class YouTubeService {
 
       // === LIVE NETWORK CALL (Only hits if cache misses and debugMode is false) ===
       print("🌐 CACHE MISS: Making a live 100-unit search request for '$cleanQuery'...");
-      final String url = 
-          'https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=$cleanQuery%20audio&type=video&videoDuration=medium&key=$_apiKey';
 
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse('https://www.googleapis.com/youtube/v3/search'
+        '?part=snippet'
+        '&type=video'
+        '&videoDuration=any'
+        '&videoCategoryId=10'
+        '&order=viewCount'
+        '&regionCode=US'
+        '&maxResults=50'
+        '&q=$cleanQuery'
+        '&key=$_apiKey',
+      ));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);
@@ -69,7 +77,6 @@ class YouTubeService {
         
         final List<Track> tracks = items.map((item) => Track.fromJson(item)).toList();
         
-        // Save to cache memory map
         _searchCache[cleanQuery] = tracks;
         return tracks;
       } else {
