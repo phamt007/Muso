@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import 'youtube_service.dart';
@@ -73,15 +74,17 @@ class _MainDashboardState extends State<MainDashboard> {
 
   Track? _currentTrack;
   
-  // Playlist & Media Control State
+  // Media Control State
   Playlist? _activePlaylist;
+  Track? _playlistAnchor; // Remembers our place in the playlist when playing queued tracks
+  final List<Track> _queue = []; // The manual queue
+  
   bool _isLooping = false;
   bool _isShuffling = false;
+  double _globalVolume = 100.0; 
   
   PlayerState _lastPlayerState = PlayerState.unknown;
   Timer? _mainTicker;
-
-  double _globalVolume = 100.0;
 
   @override
   void initState() {
@@ -96,7 +99,6 @@ class _MainDashboardState extends State<MainDashboard> {
       ),
     );
 
-    // Reliable background ticker to check when a song finishes
     _startBackgroundStateWatcher();
   }
 
@@ -132,49 +134,91 @@ class _MainDashboardState extends State<MainDashboard> {
       return;
     }
 
-    if (_activePlaylist != null && _currentTrack != null) {
-      _playNextTrack();
-    }
+    // Always attempt to play next (Queue gets priority, then Playlist)
+    _playNextTrack();
   }
 
   void _playNextTrack() {
-    if (_activePlaylist == null || _currentTrack == null) return;
+    // 1. QUEUE TAKES PRIORITY
+    if (_queue.isNotEmpty) {
+      final nextTrack = _queue.removeAt(0);
+      setState(() {
+        _currentTrack = nextTrack;
+        // Notice we do NOT change _activePlaylist or _playlistAnchor. 
+        // This lets the app remember where it was in the playlist!
+      });
+      _playerController?.loadVideoById(videoId: nextTrack.id);
+      _playerController?.playVideo();
+      return;
+    }
+
+    // 2. FALLBACK TO PLAYLIST
+    if (_activePlaylist == null || _playlistAnchor == null) return;
     final tracks = _activePlaylist!.tracks;
     if (tracks.isEmpty) return;
 
     if (_isShuffling) {
       final random = Random();
       Track nextTrack = tracks[random.nextInt(tracks.length)];
-      // Prevent repeating the exact same track twice in a row during shuffle
-      if (tracks.length > 1 && nextTrack.id == _currentTrack!.id) {
+      if (tracks.length > 1 && nextTrack.id == _playlistAnchor!.id) {
         int idx;
         do {
           idx = random.nextInt(tracks.length);
-        } while (tracks[idx].id == _currentTrack!.id);
+        } while (tracks[idx].id == _playlistAnchor!.id);
         nextTrack = tracks[idx];
       }
-      _playTrack(nextTrack, playlist: _activePlaylist, showScreen: false);
+      setState(() {
+        _currentTrack = nextTrack;
+        _playlistAnchor = nextTrack; // Update anchor
+      });
+      _playerController?.loadVideoById(videoId: nextTrack.id);
+      _playerController?.playVideo();
     } else {
-      int currentIndex = tracks.indexWhere((t) => t.id == _currentTrack!.id);
+      // Find where we left off using the Anchor
+      int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
       if (currentIndex != -1 && currentIndex < tracks.length - 1) {
-        _playTrack(tracks[currentIndex + 1], playlist: _activePlaylist, showScreen: false);
+        final nextTrack = tracks[currentIndex + 1];
+        setState(() {
+          _currentTrack = nextTrack;
+          _playlistAnchor = nextTrack; // Update anchor
+        });
+        _playerController?.loadVideoById(videoId: nextTrack.id);
+        _playerController?.playVideo();
       } else {
-        // Loop back to the start of the playlist when hitting the end
-        _playTrack(tracks.first, playlist: _activePlaylist, showScreen: false);
+        // Loop back to the start of the playlist
+        final nextTrack = tracks.first;
+        setState(() {
+          _currentTrack = nextTrack;
+          _playlistAnchor = nextTrack; // Update anchor
+        });
+        _playerController?.loadVideoById(videoId: nextTrack.id);
+        _playerController?.playVideo();
       }
     }
   }
 
   void _playPreviousTrack() {
-    if (_activePlaylist == null || _currentTrack == null) return;
+    if (_activePlaylist == null || _playlistAnchor == null) return;
     final tracks = _activePlaylist!.tracks;
     if (tracks.isEmpty) return;
 
-    int currentIndex = tracks.indexWhere((t) => t.id == _currentTrack!.id);
+    int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
     if (currentIndex > 0) {
-      _playTrack(tracks[currentIndex - 1], playlist: _activePlaylist, showScreen: false);
+      final prevTrack = tracks[currentIndex - 1];
+      setState(() {
+        _currentTrack = prevTrack;
+        _playlistAnchor = prevTrack; // Update anchor
+      });
+      _playerController?.loadVideoById(videoId: prevTrack.id);
+      _playerController?.playVideo();
     } else {
-      _playTrack(tracks.last, playlist: _activePlaylist, showScreen: false);
+      final prevTrack = tracks.last;
+      setState(() {
+        _currentTrack = prevTrack;
+        _playlistAnchor = prevTrack; // Update anchor
+      });
+      _playerController?.loadVideoById(videoId: prevTrack.id);
+      _playerController?.playVideo();
     }
   }
 
@@ -182,6 +226,15 @@ class _MainDashboardState extends State<MainDashboard> {
     setState(() {
       _currentTrack = track;
       _activePlaylist = playlist;
+      
+      // Explicitly playing a new track clears the manual queue
+      _queue.clear(); 
+      
+      if (playlist != null) {
+        _playlistAnchor = track;
+      } else {
+        _playlistAnchor = null;
+      }
     });
 
     _playerController?.loadVideoById(videoId: track.id);
@@ -211,10 +264,8 @@ class _MainDashboardState extends State<MainDashboard> {
     setState(() {
       _myPlaylists.add(newPlaylist);
     });
-    
     await _playlistService.savePlaylists(_myPlaylists);
 
-    // Show a success message if a track was added
     if (initialTrack != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added to ${newPlaylist.name}')),
@@ -249,7 +300,8 @@ class _MainDashboardState extends State<MainDashboard> {
     return '$minutes:$seconds';
   }
 
-  void _showPlaylistSelector(Track track) {
+  // === UPDATED: UNIVERSAL TRACK MENU (Queue, Create, Add) ===
+  void _showTrackMenu(Track track) {
     showModalBottomSheet(
       context: context,
       backgroundColor: widget.activeTheme.surface,
@@ -264,26 +316,47 @@ class _MainDashboardState extends State<MainDashboard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Add to Playlist',
+                'Track Options',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
 
-              // ALWAYS SHOW "CREATE NEW" AS THE FIRST OPTION
+              // 1. ADD TO QUEUE
               ListTile(
-                leading: Icon(Icons.add_box, color: widget.activeTheme.primaryAccent),
+                leading: Icon(Icons.queue_music, color: widget.activeTheme.primaryAccent),
                 title: Text(
-                  'Create New Playlist',
+                  'Add to Queue',
                   style: TextStyle(color: widget.activeTheme.primaryAccent, fontWeight: FontWeight.bold),
                 ),
                 onTap: () {
-                  Navigator.pop(bottomSheetContext); // Close bottom sheet
-                  _showCreatePlaylistDialog(context, trackToAdd: track); // Open popup with track
+                  Navigator.pop(bottomSheetContext);
+                  setState(() {
+                    _queue.add(track);
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Added to Queue to play next')),
+                  );
                 },
               ),
               
               const Divider(color: Colors.grey),
 
+              // 2. CREATE NEW PLAYLIST (With Track)
+              ListTile(
+                leading: Icon(Icons.add_box, color: widget.activeTheme.textPrimary),
+                title: Text(
+                  'Create New Playlist',
+                  style: TextStyle(color: widget.activeTheme.textPrimary, fontWeight: FontWeight.bold),
+                ),
+                onTap: () {
+                  Navigator.pop(bottomSheetContext);
+                  _showCreatePlaylistDialog(context, trackToAdd: track);
+                },
+              ),
+              
+              const Divider(color: Colors.grey),
+
+              // 3. ADD TO EXISTING PLAYLIST
               _myPlaylists.isEmpty
                   ? const Padding(
                       padding: EdgeInsets.symmetric(vertical: 20),
@@ -294,7 +367,7 @@ class _MainDashboardState extends State<MainDashboard> {
                         ),
                       ),
                     )
-                  : Flexible( // Prevents overflow if the user has many playlists
+                  : Flexible(
                       child: ListView.builder(
                         shrinkWrap: true,
                         itemCount: _myPlaylists.length,
@@ -308,7 +381,7 @@ class _MainDashboardState extends State<MainDashboard> {
                               Icons.playlist_add,
                               color: isAlreadyAdded
                                   ? widget.activeTheme.textSecondary.withOpacity(0.5)
-                                  : widget.activeTheme.textPrimary, // Made default color neutral
+                                  : widget.activeTheme.textPrimary,
                             ),
                             title: Text(
                               playlist.name,
@@ -325,11 +398,7 @@ class _MainDashboardState extends State<MainDashboard> {
                                   )
                                 : null,
                             trailing: isAlreadyAdded
-                                ? Icon(
-                                    Icons.check_circle,
-                                    color: widget.activeTheme.primaryAccent,
-                                    size: 22,
-                                  )
+                                ? Icon(Icons.check_circle, color: widget.activeTheme.primaryAccent, size: 22)
                                 : null,
                             onTap: isAlreadyAdded
                                 ? null 
@@ -374,7 +443,6 @@ class _MainDashboardState extends State<MainDashboard> {
             TextButton(
               child: Text('Create', style: TextStyle(color: widget.activeTheme.primaryAccent)),
               onPressed: () {
-                // Pass the optional track into the creation method
                 _createNewPlaylist(nameController.text, initialTrack: trackToAdd);
                 Navigator.pop(dialogContext);
               },
@@ -391,13 +459,8 @@ class _MainDashboardState extends State<MainDashboard> {
       builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: widget.activeTheme.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Text(
-            'Delete Playlist',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Delete Playlist', style: TextStyle(fontWeight: FontWeight.bold)),
           content: Text(
             'Are you sure you want to delete "${_selectedPlaylistDetail?.name}"? This action cannot be undone.',
             style: TextStyle(color: widget.activeTheme.textSecondary),
@@ -414,10 +477,7 @@ class _MainDashboardState extends State<MainDashboard> {
                     ),
                     child: TextButton(
                       onPressed: () => Navigator.pop(dialogContext),
-                      child: Text(
-                        'Cancel',
-                        style: TextStyle(color: widget.activeTheme.textPrimary),
-                      ),
+                      child: Text('Cancel', style: TextStyle(color: widget.activeTheme.textPrimary)),
                     ),
                   ),
                 ),
@@ -440,63 +500,13 @@ class _MainDashboardState extends State<MainDashboard> {
                         });
                         await _playlistService.savePlaylists(_myPlaylists);
                       },
-                      child: const Text(
-                        'Confirm',
-                        style: TextStyle(
-                          color: Colors.redAccent,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      child: const Text('Confirm', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ),
               ],
             ),
           ],
-        );
-      },
-    );
-  }
-
-  void _showThemeSelector(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: widget.activeTheme.surface,
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Select Theme Palette', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              ListTile(
-                leading: const Icon(Icons.lens, color: Colors.deepPurpleAccent),
-                title: const Text('Deep Purple'),
-                onTap: () {
-                  widget.onThemeChanged(AppColors.deepPurple);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.lens, color: Colors.cyanAccent),
-                title: const Text('Cyber Blue'),
-                onTap: () {
-                  widget.onThemeChanged(AppColors.cyberBlue);
-                  Navigator.pop(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.lens, color: Colors.greenAccent),
-                title: const Text('Forest Mint'),
-                onTap: () {
-                  widget.onThemeChanged(AppColors.forestMint);
-                  Navigator.pop(context);
-                },
-              ),
-            ],
-          ),
         );
       },
     );
@@ -522,14 +532,13 @@ class _MainDashboardState extends State<MainDashboard> {
           hasPlaylist: _activePlaylist != null,
           isLooping: _isLooping,
           isShuffling: _isShuffling,
-          // NEW: Pass the global volume down, and update it when changed!
           currentVolume: _globalVolume,
           onVolumeChanged: (val) => setState(() => _globalVolume = val),
           onToggleLoop: (val) => setState(() => _isLooping = val),
           onToggleShuffle: (val) => setState(() => _isShuffling = val),
-          onSkipNext: _activePlaylist != null ? _playNextTrack : null,
+          onSkipNext: _activePlaylist != null || _queue.isNotEmpty ? _playNextTrack : null,
           onSkipPrevious: _activePlaylist != null ? _playPreviousTrack : null,
-          onAddToPlaylist: () => _showPlaylistSelector(_currentTrack!), 
+          onOptionsTap: () => _showTrackMenu(_currentTrack!), 
         );
       },
     );
@@ -686,7 +695,10 @@ class _MainDashboardState extends State<MainDashboard> {
                                       ),
                                     )
                                   : const Icon(Icons.circle_outlined, color: Colors.grey))
-                              : null,
+                              : IconButton(
+                                  icon: const Icon(Icons.more_vert),
+                                  onPressed: () => _showTrackMenu(track),
+                                ),
                           onTap: () {
                             if (_isEditingOrder) {
                               setState(() {
@@ -741,8 +753,8 @@ class _MainDashboardState extends State<MainDashboard> {
                     title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                     subtitle: Text(track.channelTitle),
                     trailing: IconButton(
-                      icon: Icon(Icons.add_circle_outline, color: widget.activeTheme.primaryAccent),
-                      onPressed: () => _showPlaylistSelector(track),
+                      icon: Icon(Icons.more_vert, color: widget.activeTheme.primaryAccent),
+                      onPressed: () => _showTrackMenu(track),
                     ),
                     onTap: () => _playTrack(track, playlist: null),
                   );
@@ -778,7 +790,7 @@ class _MainDashboardState extends State<MainDashboard> {
             elevation: 0,
           ),
           drawer: Drawer(
-            backgroundColor: widget.activeTheme.surface, // FIX: Drawer Background Color Set directly
+            backgroundColor: widget.activeTheme.surface,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -827,7 +839,7 @@ class _MainDashboardState extends State<MainDashboard> {
                 const Divider(color: Colors.grey),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                  child: Material( // FIX: Wrapped inside Material widget
+                  child: Material(
                     color: widget.activeTheme.searchBar,
                     borderRadius: BorderRadius.circular(12),
                     clipBehavior: Clip.antiAlias,
@@ -922,13 +934,13 @@ class FullPlayerModalContent extends StatefulWidget {
   final bool hasPlaylist;
   final bool isLooping;
   final bool isShuffling;
-  final double currentVolume;               
-  final ValueChanged<double> onVolumeChanged; 
+  final double currentVolume;
+  final ValueChanged<double> onVolumeChanged;
   final ValueChanged<bool> onToggleLoop;
   final ValueChanged<bool> onToggleShuffle;
   final VoidCallback? onSkipNext;
   final VoidCallback? onSkipPrevious;
-  final VoidCallback? onAddToPlaylist;
+  final VoidCallback? onOptionsTap;
 
   const FullPlayerModalContent({
     super.key,
@@ -939,13 +951,13 @@ class FullPlayerModalContent extends StatefulWidget {
     required this.hasPlaylist,
     required this.isLooping,
     required this.isShuffling,
-    required this.currentVolume,               
-    required this.onVolumeChanged,            
+    required this.currentVolume,
+    required this.onVolumeChanged,
     required this.onToggleLoop,
     required this.onToggleShuffle,
     this.onSkipNext,
     this.onSkipPrevious,
-    this.onAddToPlaylist,
+    this.onOptionsTap,
   });
 
   @override
@@ -1076,6 +1088,7 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                   onPressed: () => Navigator.pop(context),
                 ),
               ),
+              const Spacer(),
 
               Container(
                 width: double.infinity,
@@ -1199,15 +1212,15 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                             thumbColor: widget.activeTheme.textPrimary,
                           ),
                           child: Slider(
-                            value: _localVolume, // <-- Change to _localVolume
+                            value: _localVolume,
                             min: 0.0,
                             max: 100.0,
                             onChanged: (val) {
                               setState(() {
-                                _localVolume = val; // <-- Change to _localVolume
+                                _localVolume = val;
                               });
                               widget.controller.setVolume(val.round()); 
-                              widget.onVolumeChanged(val); // <-- Sync back to main dashboard
+                              widget.onVolumeChanged(val);
                             },
                           ),
                         ),
@@ -1223,6 +1236,7 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                 const SizedBox(height: 16),
               ],
 
+              // MAIN PLAYBACK CONTROLS
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -1274,7 +1288,8 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                   IconButton(
                     iconSize: 32,
                     icon: const Icon(Icons.skip_next),
-                    color: widget.hasPlaylist ? Colors.white : Colors.grey.withOpacity(0.3),
+                    // Enable next if we are in a playlist OR there are items in the queue
+                    color: widget.onSkipNext != null ? Colors.white : Colors.grey.withOpacity(0.3),
                     onPressed: widget.onSkipNext,
                   ),
                 ],
@@ -1282,13 +1297,11 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
 
               const SizedBox(height: 16),
 
-              // SECONDARY CONTROLS (Shuffle, Options Menu, Loop)
-              // SECONDARY CONTROLS (Shuffle, Options Menu, Loop)
+              // SECONDARY CONTROLS
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24.0),
                 child: Row(
                   children: [
-                    // LEFT WING (Takes up exactly half the available remaining space)
                     Expanded(
                       child: Align(
                         alignment: Alignment.centerRight,
@@ -1305,18 +1318,16 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                         ),
                       ),
                     ),
-                    
-                    const SizedBox(width: 30), // Spacing between Shuffle and Dots
-
-                    // DEAD CENTER
+                    const SizedBox(width: 30),
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_horiz, size: 28, color: Colors.grey),
                       color: widget.activeTheme.searchBar,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       position: PopupMenuPosition.over,
                       onSelected: (value) {
-                        if (value == 'playlist' && widget.onAddToPlaylist != null) {
-                          widget.onAddToPlaylist!();
+                        if (value == 'options' && widget.onOptionsTap != null) {
+                          // Call the master track menu we just built!
+                          widget.onOptionsTap!();
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(content: Text('$value clicked!')),
@@ -1325,21 +1336,38 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                       },
                       itemBuilder: (context) => [
                         PopupMenuItem(
-                          value: 'playlist',
+                          value: 'options',
                           child: Row(
                             children: [
-                              Icon(Icons.playlist_add, color: widget.activeTheme.primaryAccent),
+                              Icon(Icons.menu_open, color: widget.activeTheme.primaryAccent),
                               const SizedBox(width: 12),
-                              Text('Add to Playlist', style: TextStyle(color: widget.activeTheme.textPrimary)),
+                              Text('Track Options', style: TextStyle(color: widget.activeTheme.textPrimary)),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'View Artist',
+                          child: Row(
+                            children: [
+                              Icon(Icons.person, color: widget.activeTheme.primaryAccent),
+                              const SizedBox(width: 12),
+                              Text('View Artist', style: TextStyle(color: widget.activeTheme.textPrimary)),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'Share',
+                          child: Row(
+                            children: [
+                              Icon(Icons.ios_share, color: widget.activeTheme.primaryAccent),
+                              const SizedBox(width: 12),
+                              Text('Share Track', style: TextStyle(color: widget.activeTheme.textPrimary)),
                             ],
                           ),
                         ),
                       ],
                     ),
-                    
-                    const SizedBox(width: 30), // Spacing between Dots and Loop
-
-                    // RIGHT WING (Takes up exactly half the available remaining space)
+                    const SizedBox(width: 30),
                     Expanded(
                       child: Align(
                         alignment: Alignment.centerLeft,
@@ -1404,12 +1432,10 @@ class _MiniPlayerState extends State<MiniPlayer> {
       double tempDurSeconds = _durationSeconds;
       PlayerState tempState = _isPlaying ? PlayerState.playing : PlayerState.unknown;
 
-      // 1. Safely Get LIVE State (Direct from JS, not cached)
       try {
         tempState = await widget.controller.playerState;
       } catch (_) {}
 
-      // 2. Safely Get Duration
       try {
         final meta = widget.controller.value.metaData;
         if (meta.duration.inSeconds > 0) {
@@ -1424,7 +1450,6 @@ class _MiniPlayerState extends State<MiniPlayer> {
         }
       }
 
-      // 3. Safely Get Current Time
       try {
         tempCurTime = await widget.controller.currentTime;
       } catch (e) {
@@ -1446,7 +1471,6 @@ class _MiniPlayerState extends State<MiniPlayer> {
           
           _durationSeconds = tempDurSeconds;
           
-          // Keep marked as playing while buffering
           if (tempState == PlayerState.playing || tempState == PlayerState.buffering) {
             _isPlaying = true;
           } else if (tempState == PlayerState.paused || tempState == PlayerState.ended) {
@@ -1517,7 +1541,6 @@ class _MiniPlayerState extends State<MiniPlayer> {
                   IconButton(
                     icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
                     onPressed: () {
-                      // Instant visual UI update
                       final wasPlaying = _isPlaying;
                       setState(() => _isPlaying = !wasPlaying);
 
