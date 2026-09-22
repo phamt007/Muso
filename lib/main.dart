@@ -258,21 +258,34 @@ class _MainDashboardState extends State<MainDashboard> {
   void _createNewPlaylist(String name, {Track? initialTrack}) async {
     if (name.isEmpty) return;
     
-    // Create the playlist. If a track was passed, put it in immediately!
-    final newPlaylist = Playlist(
-      name: name, 
-      tracks: initialTrack != null ? [initialTrack] : [],
-    );
-    
-    setState(() {
-      _myPlaylists.add(newPlaylist);
-    });
-    await _playlistService.savePlaylists(_myPlaylists);
-
-    if (initialTrack != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added to ${newPlaylist.name}')),
+    try {
+      final newPlaylist = Playlist(
+        name: name, 
+        tracks: initialTrack != null ? [initialTrack] : [],
       );
+      
+      setState(() {
+        _myPlaylists.add(newPlaylist);
+      });
+      
+      await _playlistService.savePlaylists(_myPlaylists);
+
+      if (initialTrack != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added to ${newPlaylist.name}')),
+        );
+      }
+    } catch (e) {
+      // This will force the invisible iOS error onto your screen
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('CRASH: $e'), 
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 10),
+          ),
+        );
+      }
     }
   }
 
