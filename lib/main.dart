@@ -267,7 +267,16 @@ class _MainDashboardState extends State<MainDashboard> {
         _myPlaylists.add(newPlaylist);
       });
       
-      await _playlistService.savePlaylists(_myPlaylists);
+      try {
+        // Your database or network request that is silently failing
+        await _playlistService.savePlaylists(_myPlaylists);
+      } catch (e) {
+        // Remove this:
+        // print('Error saving playlist: $e');
+        print('Error saving playlist: $e. This is a silent failure that will now be rethrown.');
+        // Add this:
+        rethrow; 
+      }
 
       if (initialTrack != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
