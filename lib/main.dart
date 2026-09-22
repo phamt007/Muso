@@ -10,10 +10,9 @@ import 'playlist_model.dart';
 import 'playlist_service.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized(); 
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MusicApp());
 }
-
 class MusicApp extends StatefulWidget {
   const MusicApp({super.key});
 
