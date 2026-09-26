@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'track_model.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class YouTubeService {
-  // PASTE YOUR GOOGLE CLOUD YOUTUBE API KEY HERE
-  final String _apiKey = 'AIzaSyASUKO5DWO1h1nKW6WMYYq6ZaCVtDumbsw'; 
+  final String _apiKey = dotenv.env['YOUTUBEAPI'] ?? '';
   final bool debugMode = false; 
 
     // In-memory cache map to store previous search queries

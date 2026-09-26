@@ -8,11 +8,14 @@ import 'track_model.dart';
 import 'app_colors.dart';
 import 'playlist_model.dart';
 import 'playlist_service.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MusicApp());
+  await dotenv.load(fileName: ".env");
+    runApp(const MusicApp());
 }
+
 class MusicApp extends StatefulWidget {
   const MusicApp({super.key});
 
