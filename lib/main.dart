@@ -301,7 +301,12 @@ class _MainDashboardState extends State<MainDashboard> {
     setState(() {
       playlist.tracks.add(track);
     });
-    await _playlistService.savePlaylists(_myPlaylists);
+    try {
+      await _playlistService.savePlaylists(_myPlaylists);
+    } catch (e) {
+
+      rethrow; 
+    }
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added to ${playlist.name}')),
