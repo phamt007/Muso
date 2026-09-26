@@ -273,6 +273,7 @@ class _MainDashboardState extends State<MainDashboard> {
       try {
         // Your database or network request that is silently failing
         await _playlistService.savePlaylists(_myPlaylists);
+
       } catch (e) {
         // Remove this:
         // print('Error saving playlist: $e');
