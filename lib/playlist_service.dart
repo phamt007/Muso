@@ -38,4 +38,19 @@ class PlaylistService {
         .map((jsonStr) => Playlist.fromMap(json.decode(jsonStr)))
         .toList();
   }
+
+  factory Playlist.fromMap(Map<String, dynamic> map) {
+  // Safely grab the tracks list, defaulting to an empty list if null
+    var rawTracks = map['tracks'] as List? ?? [];
+    
+    // Explicitly cast both the Map and the List output to satisfy AOT strictness
+    List<Track> trackList = rawTracks.map((t) {
+      return Track.fromMap(Map<String, dynamic>.from(t as Map));
+    }).toList();
+
+    return Playlist(
+      name: map['name']?.toString() ?? 'Unnamed Playlist', 
+      tracks: trackList
+    );
+  }
 }

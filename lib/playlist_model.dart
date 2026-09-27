@@ -22,16 +22,17 @@ class Playlist {
 
   // Create Playlist object back from a Map
   factory Playlist.fromMap(Map<String, dynamic> map) {
-    var rawTracks = map['tracks'] as List;
-    List<Track> trackList = rawTracks.map((t) => Track.fromJson({
-      'id': {'videoId': t['id']},
-      'snippet': {
-        'title': t['title'],
-        'channelTitle': t['channelTitle'],
-        'thumbnails': {'medium': {'url': t['thumbnailUrl']}}
-      }
-    })).toList();
+    var rawTracks = map['tracks'] as List? ?? [];
+    
+    List<Track> trackList = rawTracks.map((t) {
+      return Track.fromMap(Map<String, dynamic>.from(t as Map));
+    }).toList();
 
-    return Playlist(name: map['name'], tracks: trackList);
+    return Playlist(
+      name: map['name']?.toString() ?? 'Unnamed Playlist', 
+      tracks: trackList
+    );
   }
+
+
 }

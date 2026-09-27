@@ -27,4 +27,13 @@ class Track {
       thumbnailUrl: highRes['url'] ?? '',
     );
   }
+  
+  factory Track.fromMap(Map<String, dynamic> map) {
+    return Track(
+      id: map['id']?.toString() ?? '',
+      title: map['title']?.toString() ?? 'Unknown Title',
+      channelTitle: map['channelTitle']?.toString() ?? 'Unknown Artist',
+      thumbnailUrl: map['thumbnailUrl']?.toString() ?? '',
+    );
+  }
 }
