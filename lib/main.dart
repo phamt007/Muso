@@ -320,11 +320,25 @@ class _MainDashboardState extends State<MainDashboard> {
 
   void _executeSearch(String query) async {
     if (query.isEmpty) return;
-    final results = await _apiService.searchMusic(query);
-    setState(() {
-      _searchResults = results;
-      _currentView = 'search';
-    });
+    
+    try {
+      final results = await _apiService.searchMusic(query);
+      setState(() {
+        _searchResults = results;
+        _currentView = 'search';
+      });
+    } catch (e) {
+      // This will pop up the red banner revealing the hidden crash
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Search Error: $e'), 
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 10),
+          ),
+        );
+      }
+    }
   }
 
   String _formatDuration(Duration duration) {

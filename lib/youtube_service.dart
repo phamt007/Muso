@@ -4,7 +4,7 @@ import 'track_model.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class YouTubeService {
-  final String _apiKey = dotenv.env['YOUTUBEAPI'] ?? '';
+  final _apiKey = dotenv.env['YOUTUBEAPI'];
   final bool debugMode = false; 
 
     // In-memory cache map to store previous search queries
