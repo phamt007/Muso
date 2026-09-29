@@ -1,11 +1,13 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart';
+
 import 'youtube_service.dart';
 import 'track_model.dart';
 import 'playlist_model.dart';
 
-// === DUMMY DATA MODELS TO MAKE THE UI STANDALONE ===
+// === DUMMY DATA MODELS ===
 class AppColors {
   final Color background;
   final Color surface;
@@ -23,14 +25,10 @@ class AppColors {
     required this.textSecondary,
   });
 
-  static const deepPurple = AppColors(
-      background: Color(0xFF121212), surface: Color(0xFF1E1E1E), primaryAccent: Colors.deepPurpleAccent, searchBar: Color(0xFF2C2C2C), textPrimary: Colors.white, textSecondary: Colors.grey);
-  static const cyberBlue = AppColors(
-      background: Color(0xFF0A0F24), surface: Color(0xFF111936), primaryAccent: Colors.cyanAccent, searchBar: Color(0xFF1A264F), textPrimary: Colors.white, textSecondary: Colors.grey);
-  static const forestMint = AppColors(
-      background: Color(0xFF0F1A15), surface: Color(0xFF16261E), primaryAccent: Colors.greenAccent, searchBar: Color(0xFF1F362A), textPrimary: Colors.white, textSecondary: Colors.grey);
+  static const deepPurple = AppColors(background: Color(0xFF121212), surface: Color(0xFF1E1E1E), primaryAccent: Colors.deepPurpleAccent, searchBar: Color(0xFF2C2C2C), textPrimary: Colors.white, textSecondary: Colors.grey);
+  static const cyberBlue = AppColors(background: Color(0xFF0A0F24), surface: Color(0xFF111936), primaryAccent: Colors.cyanAccent, searchBar: Color(0xFF1A264F), textPrimary: Colors.white, textSecondary: Colors.grey);
+  static const forestMint = AppColors(background: Color(0xFF0F1A15), surface: Color(0xFF16261E), primaryAccent: Colors.greenAccent, searchBar: Color(0xFF1F362A), textPrimary: Colors.white, textSecondary: Colors.grey);
 }
-
 
 // === MAIN APP ENTRY ===
 Future<void> main() async {
@@ -75,11 +73,7 @@ class MainDashboard extends StatefulWidget {
   final AppColors activeTheme;
   final ValueChanged<AppColors> onThemeChanged;
 
-  const MainDashboard({
-    super.key,
-    required this.activeTheme,
-    required this.onThemeChanged,
-  });
+  const MainDashboard({super.key, required this.activeTheme, required this.onThemeChanged});
 
   @override
   State<MainDashboard> createState() => _MainDashboardState();
@@ -88,6 +82,9 @@ class MainDashboard extends StatefulWidget {
 class _MainDashboardState extends State<MainDashboard> {
   final YouTubeService _apiService = YouTubeService();
   final TextEditingController _searchController = TextEditingController();
+  
+  // Audio Engine Controller
+  YoutubePlayerController? _playerController;
 
   List<Track> _searchResults = [];
   String _currentView = 'search';
@@ -110,15 +107,25 @@ class _MainDashboardState extends State<MainDashboard> {
   @override
   void initState() {
     super.initState();
+    // Initialize the hidden YouTube audio engine
+    _playerController = YoutubePlayerController(
+      params: const YoutubePlayerParams(
+        showControls: false,
+        showFullscreenButton: false,
+        mute: false,
+      ),
+    );
   }
 
-  // === BUILT-IN VISUAL DEBUGGER ===
+  @override
+  void dispose() {
+    _playerController?.close();
+    super.dispose();
+  }
+
   void _showDebugNotification(String message) {
     if (!mounted) return;
-    
-    // Instantly clear older debug messages so they don't stack up
     ScaffoldMessenger.of(context).clearSnackBars();
-    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -128,9 +135,9 @@ class _MainDashboardState extends State<MainDashboard> {
             Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold))),
           ],
         ),
-        backgroundColor: Colors.orange.shade800, // Bright orange to stand out
+        backgroundColor: Colors.orange.shade800,
         duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating, // Floats above the bottom navigation bar
+        behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16), 
       ),
     );
@@ -138,34 +145,22 @@ class _MainDashboardState extends State<MainDashboard> {
 
   void _playNextTrack() {
     if (_queue.isNotEmpty) {
-      setState(() {
-        _currentTrack = _queue.removeAt(0);
-      });
+      _playTrack(_queue.removeAt(0), showScreen: false);
       return;
     }
-
     if (_activePlaylist == null || _playlistAnchor == null) return;
     final tracks = _activePlaylist!.tracks;
     if (tracks.isEmpty) return;
 
     if (_isShuffling) {
       final random = Random();
-      setState(() {
-        _currentTrack = tracks[random.nextInt(tracks.length)];
-        _playlistAnchor = _currentTrack;
-      });
+      _playTrack(tracks[random.nextInt(tracks.length)], playlist: _activePlaylist, showScreen: false);
     } else {
       int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
       if (currentIndex != -1 && currentIndex < tracks.length - 1) {
-        setState(() {
-          _currentTrack = tracks[currentIndex + 1];
-          _playlistAnchor = _currentTrack;
-        });
+        _playTrack(tracks[currentIndex + 1], playlist: _activePlaylist, showScreen: false);
       } else {
-        setState(() {
-          _currentTrack = tracks.first;
-          _playlistAnchor = _currentTrack;
-        });
+        _playTrack(tracks.first, playlist: _activePlaylist, showScreen: false);
       }
     }
   }
@@ -177,15 +172,9 @@ class _MainDashboardState extends State<MainDashboard> {
 
     int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
     if (currentIndex > 0) {
-      setState(() {
-        _currentTrack = tracks[currentIndex - 1];
-        _playlistAnchor = _currentTrack;
-      });
+      _playTrack(tracks[currentIndex - 1], playlist: _activePlaylist, showScreen: false);
     } else {
-      setState(() {
-        _currentTrack = tracks.last;
-        _playlistAnchor = _currentTrack;
-      });
+      _playTrack(tracks.last, playlist: _activePlaylist, showScreen: false);
     }
   }
 
@@ -196,6 +185,12 @@ class _MainDashboardState extends State<MainDashboard> {
       _queue.clear();
       _playlistAnchor = playlist != null ? track : null;
     });
+
+    _showDebugNotification('Playing track: ${track.title}');
+    
+    // Command the hidden engine to stream the audio
+    _playerController?.loadVideoById(videoId: track.id);
+    _playerController?.playVideo();
 
     if (showScreen) {
       _openFullPlayerScreen();
@@ -233,14 +228,11 @@ class _MainDashboardState extends State<MainDashboard> {
 
     try {
       final results = await _apiService.searchMusic(query);
-      
       setState(() {
         _searchResults = results;
         _currentView = 'search';
       });
-      
       _showDebugNotification('Found ${results.length} results!');
-      
     } catch (e) {
       _showDebugNotification('ERROR: $e');
     }
@@ -416,7 +408,7 @@ class _MainDashboardState extends State<MainDashboard> {
   }
 
   void _openFullPlayerScreen() {
-    if (_currentTrack == null) return;
+    if (_currentTrack == null || _playerController == null) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -425,6 +417,7 @@ class _MainDashboardState extends State<MainDashboard> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (bottomSheetContext) {
         return FullPlayerModalContent(
+          controller: _playerController!, // Pass the controller
           track: _currentTrack!,
           activeTheme: widget.activeTheme,
           formatDuration: _formatDuration,
@@ -432,7 +425,10 @@ class _MainDashboardState extends State<MainDashboard> {
           isLooping: _isLooping,
           isShuffling: _isShuffling,
           currentVolume: _globalVolume,
-          onVolumeChanged: (val) => setState(() => _globalVolume = val),
+          onVolumeChanged: (val) {
+             setState(() => _globalVolume = val);
+             _playerController?.setVolume(val.round());
+          },
           onToggleLoop: (val) => setState(() => _isLooping = val),
           onToggleShuffle: (val) => setState(() => _isShuffling = val),
           onSkipNext: _activePlaylist != null || _queue.isNotEmpty ? _playNextTrack : null,
@@ -444,6 +440,13 @@ class _MainDashboardState extends State<MainDashboard> {
   }
 
   Widget _buildBody() {
+    final Widget fallbackThumbnail = Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(color: widget.activeTheme.primaryAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+      child: Icon(Icons.music_note, color: widget.activeTheme.primaryAccent),
+    );
+
     switch (_currentView) {
       case 'playlists':
         return ListView.builder(
@@ -552,7 +555,12 @@ class _MainDashboardState extends State<MainDashboard> {
                         final selectIndex = _selectedForReorder.indexOf(track) + 1;
 
                         return ListTile(
-                          leading: _buildDummyThumbnail(widget.activeTheme.primaryAccent),
+                          leading: track.thumbnailUrl.isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
+                                )
+                              : fallbackThumbnail,
                           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                           subtitle: Text(track.channelTitle),
                           trailing: _isEditingOrder
@@ -609,7 +617,12 @@ class _MainDashboardState extends State<MainDashboard> {
                       itemBuilder: (context, index) {
                         final track = _searchResults[index];
                         return ListTile(
-                          leading: _buildDummyThumbnail(widget.activeTheme.primaryAccent),
+                          leading: track.thumbnailUrl.isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
+                                )
+                              : fallbackThumbnail,
                           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                           subtitle: Text(track.channelTitle),
                           trailing: IconButton(
@@ -624,15 +637,6 @@ class _MainDashboardState extends State<MainDashboard> {
           ],
         );
     }
-  }
-
-  Widget _buildDummyThumbnail(Color color) {
-    return Container(
-      width: 50,
-      height: 50,
-      decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-      child: Icon(Icons.music_note, color: color),
-    );
   }
 
   @override
@@ -737,15 +741,31 @@ class _MainDashboardState extends State<MainDashboard> {
           ],
         ),
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(child: _buildBody()),
-          if (_currentTrack != null)
-            MiniPlayer(
-              track: _currentTrack!,
-              activeTheme: widget.activeTheme,
-              onTap: _openFullPlayerScreen,
+          // The hidden iframe rendering the audio
+          if (_playerController != null)
+            Positioned(
+              width: 1,
+              height: 1,
+              child: Opacity(
+                opacity: 0.01,
+                child: YoutubePlayer(controller: _playerController!),
+              ),
             ),
+            
+          Column(
+            children: [
+              Expanded(child: _buildBody()),
+              if (_currentTrack != null && _playerController != null)
+                MiniPlayer(
+                  controller: _playerController!, // Pass controller
+                  track: _currentTrack!,
+                  activeTheme: widget.activeTheme,
+                  onTap: _openFullPlayerScreen,
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -754,6 +774,7 @@ class _MainDashboardState extends State<MainDashboard> {
 
 // === FULL PLAYER MODAL UI ===
 class FullPlayerModalContent extends StatefulWidget {
+  final YoutubePlayerController controller;
   final Track track;
   final AppColors activeTheme;
   final String Function(Duration) formatDuration;
@@ -770,6 +791,7 @@ class FullPlayerModalContent extends StatefulWidget {
 
   const FullPlayerModalContent({
     super.key,
+    required this.controller,
     required this.track,
     required this.activeTheme,
     required this.formatDuration,
@@ -791,7 +813,7 @@ class FullPlayerModalContent extends StatefulWidget {
 
 class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
   double _currentSeconds = 0.0;
-  final Duration _duration = const Duration(seconds: 200); // Fixed dummy duration
+  final Duration _duration = const Duration(seconds: 200);
   bool _isPlaying = true;
   late double _localVolume;
   late bool _localIsLooping;
@@ -843,9 +865,14 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                     BoxShadow(color: widget.activeTheme.primaryAccent.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 8)),
                   ],
                 ),
-                child: AspectRatio(
-                  aspectRatio: 1,
-                  child: Icon(Icons.music_note, size: 120, color: widget.activeTheme.primaryAccent),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: widget.track.thumbnailUrl.isNotEmpty
+                      ? Image.network(widget.track.thumbnailUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => Icon(Icons.music_note, size: 120, color: widget.activeTheme.primaryAccent))
+                      : Icon(Icons.music_note, size: 120, color: widget.activeTheme.primaryAccent),
+                  ),
                 ),
               ),
               const SizedBox(height: 24),
@@ -946,7 +973,15 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
                       iconSize: 32,
                       color: widget.activeTheme.background,
                       icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                      onPressed: () => setState(() => _isPlaying = !_isPlaying),
+                      onPressed: () {
+                        final wasPlaying = _isPlaying;
+                        setState(() => _isPlaying = !wasPlaying);
+                        if (wasPlaying) {
+                          widget.controller.pauseVideo();
+                        } else {
+                          widget.controller.playVideo();
+                        }
+                      },
                     ),
                   ),
                   IconButton(
@@ -1022,11 +1057,12 @@ class _FullPlayerModalContentState extends State<FullPlayerModalContent> {
 
 // === MINI PLAYER UI ===
 class MiniPlayer extends StatefulWidget {
+  final YoutubePlayerController controller;
   final Track track;
   final AppColors activeTheme;
   final VoidCallback onTap;
 
-  const MiniPlayer({super.key, required this.track, required this.activeTheme, required this.onTap});
+  const MiniPlayer({super.key, required this.controller, required this.track, required this.activeTheme, required this.onTap});
 
   @override
   State<MiniPlayer> createState() => _MiniPlayerState();
@@ -1045,7 +1081,7 @@ class _MiniPlayerState extends State<MiniPlayer> {
           mainAxisSize: MainAxisSize.min,
           children: [
             LinearProgressIndicator(
-              value: 0.3, // Fixed dummy progress
+              value: 0.3,
               backgroundColor: widget.activeTheme.searchBar,
               valueColor: AlwaysStoppedAnimation<Color>(widget.activeTheme.primaryAccent),
               minHeight: 2.0,
@@ -1054,11 +1090,11 @@ class _MiniPlayerState extends State<MiniPlayer> {
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
               child: Row(
                 children: [
-                  Container(
-                    width: 50,
-                    height: 45,
-                    decoration: BoxDecoration(color: widget.activeTheme.primaryAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
-                    child: Icon(Icons.music_note, color: widget.activeTheme.primaryAccent),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: widget.track.thumbnailUrl.isNotEmpty
+                      ? Image.network(widget.track.thumbnailUrl, width: 50, height: 45, fit: BoxFit.cover, errorBuilder: (c, e, s) => Icon(Icons.music_note, color: widget.activeTheme.primaryAccent))
+                      : Container(width: 50, height: 45, decoration: BoxDecoration(color: widget.activeTheme.primaryAccent.withOpacity(0.2)), child: Icon(Icons.music_note, color: widget.activeTheme.primaryAccent)),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1073,7 +1109,15 @@ class _MiniPlayerState extends State<MiniPlayer> {
                   ),
                   IconButton(
                     icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
-                    onPressed: () => setState(() => _isPlaying = !_isPlaying),
+                    onPressed: () {
+                      final wasPlaying = _isPlaying;
+                      setState(() => _isPlaying = !wasPlaying);
+                      if (wasPlaying) {
+                        widget.controller.pauseVideo();
+                      } else {
+                        widget.controller.playVideo();
+                      }
+                    },
                   ),
                 ],
               ),

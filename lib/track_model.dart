@@ -10,4 +10,5 @@ class Track {
     required this.channelTitle,
     required this.thumbnailUrl,
   });
+  
 }
