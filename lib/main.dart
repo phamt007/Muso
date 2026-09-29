@@ -743,23 +743,25 @@ class _MainDashboardState extends State<MainDashboard> {
       ),
       body: Stack(
         children: [
-          // The hidden iframe rendering the audio
+          // 1. The Off-Screen Player Hack
+          // We make it a completely normal size so iOS WebKit doesn't kill it,
+          // but we push it 1000 pixels off the top of the screen so it's invisible.
           if (_playerController != null)
             Positioned(
-              width: 1,
-              height: 1,
-              child: Opacity(
-                opacity: 0.01,
-                child: YoutubePlayer(controller: _playerController!),
-              ),
+              top: -1000, 
+              left: 0,
+              width: 300,
+              height: 300,
+              child: YoutubePlayer(controller: _playerController!),
             ),
             
+          // 2. Your Actual UI
           Column(
             children: [
               Expanded(child: _buildBody()),
               if (_currentTrack != null && _playerController != null)
                 MiniPlayer(
-                  controller: _playerController!, // Pass controller
+                  controller: _playerController!, 
                   track: _currentTrack!,
                   activeTheme: widget.activeTheme,
                   onTap: _openFullPlayerScreen,
