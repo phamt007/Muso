@@ -1,5 +1,9 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'youtube_service.dart';
+import 'track_model.dart';
+import 'playlist_model.dart';
 
 // === DUMMY DATA MODELS TO MAKE THE UI STANDALONE ===
 class AppColors {
@@ -27,21 +31,11 @@ class AppColors {
       background: Color(0xFF0F1A15), surface: Color(0xFF16261E), primaryAccent: Colors.greenAccent, searchBar: Color(0xFF1F362A), textPrimary: Colors.white, textSecondary: Colors.grey);
 }
 
-class Track {
-  final String id;
-  final String title;
-  final String channelTitle;
-  Track({required this.id, required this.title, required this.channelTitle});
-}
-
-class Playlist {
-  final String name;
-  final List<Track> tracks;
-  Playlist({required this.name, required this.tracks});
-}
 
 // === MAIN APP ENTRY ===
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: ".env");
   runApp(const MusicApp());
 }
 
@@ -92,6 +86,7 @@ class MainDashboard extends StatefulWidget {
 }
 
 class _MainDashboardState extends State<MainDashboard> {
+  final YouTubeService _apiService = YouTubeService();
   final TextEditingController _searchController = TextEditingController();
 
   List<Track> _searchResults = [];
@@ -115,11 +110,30 @@ class _MainDashboardState extends State<MainDashboard> {
   @override
   void initState() {
     super.initState();
-    // Pre-load a dummy playlist for UI testing
-    _myPlaylists.add(Playlist(name: "My Favorites", tracks: [
-      Track(id: "1", title: "Midnight City", channelTitle: "M83"),
-      Track(id: "2", title: "Blinding Lights", channelTitle: "The Weeknd"),
-    ]));
+  }
+
+  // === BUILT-IN VISUAL DEBUGGER ===
+  void _showDebugNotification(String message) {
+    if (!mounted) return;
+    
+    // Instantly clear older debug messages so they don't stack up
+    ScaffoldMessenger.of(context).clearSnackBars();
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.bug_report, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold))),
+          ],
+        ),
+        backgroundColor: Colors.orange.shade800, // Bright orange to stand out
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating, // Floats above the bottom navigation bar
+        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16), 
+      ),
+    );
   }
 
   void _playNextTrack() {
@@ -213,20 +227,23 @@ class _MainDashboardState extends State<MainDashboard> {
     );
   }
 
-  void _executeSearch(String query) {
+  Future<void> _executeSearch(String query) async {
     if (query.isEmpty) return;
-    // Generate dummy UI data instead of API call
-    setState(() {
-      _searchResults = List.generate(
-        10,
-        (index) => Track(
-          id: 'search_$index',
-          title: '$query - Track ${index + 1}',
-          channelTitle: 'Dummy Artist',
-        ),
-      );
-      _currentView = 'search';
-    });
+    _showDebugNotification('Executing Search for: "$query"');
+
+    try {
+      final results = await _apiService.searchMusic(query);
+      
+      setState(() {
+        _searchResults = results;
+        _currentView = 'search';
+      });
+      
+      _showDebugNotification('Found ${results.length} results!');
+      
+    } catch (e) {
+      _showDebugNotification('ERROR: $e');
+    }
   }
 
   String _formatDuration(Duration duration) {

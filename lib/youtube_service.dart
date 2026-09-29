@@ -1,86 +1,42 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'track_model.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+// Import your track model here if it is in a separate file
 
 class YouTubeService {
-  final _apiKey = dotenv.env['YOUTUBEAPI'];
-  final bool debugMode = false; 
-
-    // In-memory cache map to store previous search queries
-    final Map<String, List<Track>> _searchCache = {};
-
-    Future<List<Track>> searchMusic(String query) async {
-      final cleanQuery = query.trim().toLowerCase();
-
-      if (debugMode) {
-        print("🚧 DEBUG MODE ACTIVE: Returning zero-quota fake test tracks.");
-        await Future.delayed(const Duration(milliseconds: 400)); // Mimics network lag
-        return [
-          Track(
-            id: 'jfKfPfyJRdk', 
-            title: 'Lo-Fi Chill Study Beats (Mock Track)', 
-            channelTitle: 'Lofi Chilled Records', 
-            thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=150',
-          ),
-          Track(
-            id: 'dQw4w9WgXcQ', 
-            title: 'Synthwave Retro Coding Mix (Mock Track)', 
-            channelTitle: 'Synth Records', 
-            thumbnailUrl: 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150',
-          ),
-          Track(
-            id: '9FvvbVI5rY0', 
-            title: 'Acoustic Coffee Shop Guitar (Mock Track)', 
-            channelTitle: 'The Acoustic Club', 
-            thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150',
-          ),
-          Track(
-            id: '9FvvbVI5rY0', 
-            title: 'Acoustic Coffee Shop Guitar (Mock Track)', 
-            channelTitle: 'The Acoustic Club', 
-            thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150',
-          ),
-          Track(
-            id: '9FvvbVI5rY0', 
-            title: 'Acoustic Coffee Shop Guitar (Mock Track)', 
-            channelTitle: 'The Acoustic Club', 
-            thumbnailUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150',
-          ),
-        ];
-      }
-
-      // === STRATEGY 1: LOCAL IN-MEMORY CACHE ===
-      if (_searchCache.containsKey(cleanQuery)) {
-        print("🎯 CACHE HIT: Quota Saved! Pulling '$cleanQuery' from local memory.");
-        return _searchCache[cleanQuery]!;
-      }
-
-      // === LIVE NETWORK CALL (Only hits if cache misses and debugMode is false) ===
-      print("🌐 CACHE MISS: Making a live 100-unit search request for '$cleanQuery'...");
-
-      final response = await http.get(Uri.parse('https://www.googleapis.com/youtube/v3/search'
-        '?part=snippet'
-        '&type=video'
-        '&videoDuration=any'
-        '&videoCategoryId=10'
-        '&order=viewCount'
-        '&regionCode=US'
-        '&maxResults=50'
-        '&q=$cleanQuery'
-        '&key=$_apiKey',
-      ));
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = json.decode(response.body);
-        final List<dynamic> items = data['items'];
-        
-        final List<Track> tracks = items.map((item) => Track.fromJson(item)).toList();
-        
-        _searchCache[cleanQuery] = tracks;
-        return tracks;
-      } else {
-        throw Exception('Failed to load music from YouTube. Check your API Key.');
-      }
+  Future<List<Track>> searchMusic(String query) async {
+    // Looks for the exact variable name you used in Codemagic
+    final apiKey = dotenv.env['YOUTUBEAPI']; 
+    
+    if (apiKey == null || apiKey.isEmpty) {
+      throw Exception('API Key is missing from .env file');
     }
+
+    // YouTube API Endpoint (Filtered for Music Category 10)
+    final url = Uri.parse(
+        'https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=15&q=$query&type=video&videoCategoryId=10&key=$apiKey');
+
+    final response = await http.get(url);
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final List items = data['items'] ?? [];
+      
+      return items.map((item) {
+        final snippet = item['snippet'] ?? {};
+        final thumbnails = snippet['thumbnails'] ?? {};
+        final highRes = thumbnails['high'] ?? thumbnails['medium'] ?? thumbnails['default'] ?? {};
+        
+        return Track(
+          id: item['id']['videoId'] ?? '',
+          title: snippet['title'] ?? 'Unknown Title',
+          channelTitle: snippet['channelTitle'] ?? 'Unknown Artist',
+          thumbnailUrl: highRes['url'] ?? 'https://via.placeholder.com/150', // Fallback image
+        );
+      }).toList();
+    } else {
+      throw Exception('Network Error: ${response.statusCode}');
+    }
+  }
 }
