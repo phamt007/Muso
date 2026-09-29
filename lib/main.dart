@@ -2,7 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-// ADD "hide Playlist" TO THIS LINE:
+// FIX: Hides the package's Playlist class to prevent collisions with your local model
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist; 
 
 import 'package:just_audio/just_audio.dart';
@@ -35,6 +35,7 @@ class AppColors {
   static const forestMint = AppColors(background: Color(0xFF0F1A15), surface: Color(0xFF16261E), primaryAccent: Colors.greenAccent, searchBar: Color(0xFF1F362A), textPrimary: Colors.white, textSecondary: Colors.grey);
 }
 
+// === MAIN APP ENTRY ===
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
@@ -93,8 +94,10 @@ class _MainDashboardState extends State<MainDashboard> {
 
   List<Track> _searchResults = [];
   String _currentView = 'search';
+
   Playlist? _selectedPlaylistDetail;
   final List<Playlist> _myPlaylists = [];
+
   bool _isEditingOrder = false;
   final List<Track> _selectedForReorder = [];
 
@@ -103,7 +106,9 @@ class _MainDashboardState extends State<MainDashboard> {
   Track? _playlistAnchor;
   final List<Track> _queue = [];
 
+  bool _isLooping = false;
   bool _isShuffling = false;
+  double _globalVolume = 1.0; // just_audio uses 0.0 to 1.0 for volume
 
   @override
   void initState() {
@@ -119,7 +124,6 @@ class _MainDashboardState extends State<MainDashboard> {
   }
 
   Future<void> _initAudioSession() async {
-    // This tells iOS: "I am a music app, don't kill me when the screen locks!"
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
   }
@@ -186,7 +190,7 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-  // === THE NEW SCRAPING & PLAYBACK LOGIC ===
+  // === NATIVE STREAM SCRAPING ===
   Future<void> _playTrack(Track track, {Playlist? playlist, bool showScreen = true}) async {
     setState(() {
       _currentTrack = track;
@@ -198,13 +202,9 @@ class _MainDashboardState extends State<MainDashboard> {
     _showDebugNotification('Extracting stream for: ${track.title}...');
 
     try {
-      // 1. Ask YoutubeExplode to get the backend manifest for this video ID
       var manifest = await _ytExplode.videos.streamsClient.getManifest(track.id);
-      
-      // 2. Filter out the video and get the highest bitrate audio file
       var audioStreamInfo = manifest.audioOnly.withHighestBitrate();
       
-      // 3. Pass that raw URL to the native iOS audio player
       await _audioPlayer.setUrl(audioStreamInfo.url.toString());
       _audioPlayer.play();
       
@@ -220,42 +220,206 @@ class _MainDashboardState extends State<MainDashboard> {
 
   void _createNewPlaylist(String name, {Track? initialTrack}) {
     if (name.isEmpty) return;
-    final newPlaylist = Playlist(name: name, tracks: initialTrack != null ? [initialTrack] : []);
-    setState(() => _myPlaylists.add(newPlaylist));
+    final newPlaylist = Playlist(
+      name: name,
+      tracks: initialTrack != null ? [initialTrack] : [],
+    );
+    setState(() {
+      _myPlaylists.add(newPlaylist);
+    });
     if (initialTrack != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Added to ${newPlaylist.name}')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added to ${newPlaylist.name}')),
+      );
     }
   }
 
   void _addTrackToPlaylist(Track track, Playlist playlist) {
-    setState(() => playlist.tracks.add(track));
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Added to ${playlist.name}')));
+    setState(() {
+      playlist.tracks.add(track);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Added to ${playlist.name}')),
+    );
   }
 
   Future<void> _executeSearch(String query) async {
     if (query.isEmpty) return;
     _showDebugNotification('Searching...');
+
     try {
       final results = await _apiService.searchMusic(query);
       setState(() {
         _searchResults = results;
         _currentView = 'search';
       });
+      _showDebugNotification('Found ${results.length} results!');
     } catch (e) {
       _showDebugNotification('ERROR: $e');
     }
   }
 
   void _showTrackMenu(Track track) {
-    // (Omitted for brevity, paste your _showTrackMenu here!)
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: widget.activeTheme.surface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (bottomSheetContext) {
+        return Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Track Options', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              ListTile(
+                leading: Icon(Icons.queue_music, color: widget.activeTheme.primaryAccent),
+                title: Text('Add to Queue', style: TextStyle(color: widget.activeTheme.primaryAccent, fontWeight: FontWeight.bold)),
+                onTap: () {
+                  Navigator.pop(bottomSheetContext);
+                  setState(() => _queue.add(track));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to Queue to play next')));
+                },
+              ),
+              const Divider(color: Colors.grey),
+              ListTile(
+                leading: Icon(Icons.add_box, color: widget.activeTheme.textPrimary),
+                title: Text('Create New Playlist', style: TextStyle(color: widget.activeTheme.textPrimary, fontWeight: FontWeight.bold)),
+                onTap: () {
+                  Navigator.pop(bottomSheetContext);
+                  _showCreatePlaylistDialog(context, trackToAdd: track);
+                },
+              ),
+              const Divider(color: Colors.grey),
+              _myPlaylists.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 20),
+                      child: Center(child: Text('No existing playlists.', style: TextStyle(color: Colors.grey))),
+                    )
+                  : Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _myPlaylists.length,
+                        itemBuilder: (context, index) {
+                          final playlist = _myPlaylists[index];
+                          final bool isAlreadyAdded = playlist.tracks.any((t) => t.id == track.id);
+                          return ListTile(
+                            enabled: !isAlreadyAdded,
+                            leading: Icon(
+                              Icons.playlist_add,
+                              color: isAlreadyAdded ? widget.activeTheme.textSecondary.withOpacity(0.5) : widget.activeTheme.textPrimary,
+                            ),
+                            title: Text(
+                              playlist.name,
+                              style: TextStyle(color: isAlreadyAdded ? widget.activeTheme.textSecondary : widget.activeTheme.textPrimary),
+                            ),
+                            subtitle: isAlreadyAdded ? const Text('Already in playlist', style: TextStyle(fontSize: 12, color: Colors.grey)) : null,
+                            trailing: isAlreadyAdded ? Icon(Icons.check_circle, color: widget.activeTheme.primaryAccent, size: 22) : null,
+                            onTap: isAlreadyAdded
+                                ? null
+                                : () {
+                                    Navigator.pop(bottomSheetContext);
+                                    _addTrackToPlaylist(track, playlist);
+                                  },
+                          );
+                        },
+                      ),
+                    ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _showCreatePlaylistDialog(BuildContext context, {Track? trackToAdd}) {
-    // (Omitted for brevity, paste your _showCreatePlaylistDialog here!)
+    final TextEditingController nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: widget.activeTheme.surface,
+          title: const Text('New Playlist'),
+          content: TextField(
+            controller: nameController,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: 'Enter playlist title...',
+              focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: widget.activeTheme.primaryAccent)),
+            ),
+          ),
+          actions: [
+            TextButton(
+              child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+              onPressed: () => Navigator.pop(dialogContext),
+            ),
+            TextButton(
+              child: Text('Create', style: TextStyle(color: widget.activeTheme.primaryAccent)),
+              onPressed: () {
+                _createNewPlaylist(nameController.text, initialTrack: trackToAdd);
+                Navigator.pop(dialogContext);
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showDeletePlaylistDialog(BuildContext context) {
-    // (Omitted for brevity, paste your _showDeletePlaylistDialog here!)
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: widget.activeTheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Delete Playlist', style: TextStyle(fontWeight: FontWeight.bold)),
+          content: Text(
+            'Are you sure you want to delete "${_selectedPlaylistDetail?.name}"? This action cannot be undone.',
+            style: TextStyle(color: widget.activeTheme.textSecondary),
+          ),
+          actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(color: widget.activeTheme.searchBar, borderRadius: BorderRadius.circular(8)),
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: Text('Cancel', style: TextStyle(color: widget.activeTheme.textPrimary)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+                    ),
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.pop(dialogContext);
+                        setState(() {
+                          _selectedForReorder.clear();
+                          _isEditingOrder = false;
+                          _myPlaylists.remove(_selectedPlaylistDetail);
+                          _currentView = 'playlists';
+                        });
+                      },
+                      child: const Text('Confirm', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _openFullPlayerScreen() {
@@ -263,16 +427,24 @@ class _MainDashboardState extends State<MainDashboard> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      enableDrag: true,
       backgroundColor: widget.activeTheme.background,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (bottomSheetContext) {
         return FullPlayerModalContent(
-          player: _audioPlayer, // Pass the native player
+          player: _audioPlayer, // Pass the native player instead of Youtube controller
           track: _currentTrack!,
           activeTheme: widget.activeTheme,
           hasPlaylist: _activePlaylist != null,
+          isLooping: _isLooping,
           isShuffling: _isShuffling,
+          currentVolume: _globalVolume,
+          onVolumeChanged: (val) {
+             setState(() => _globalVolume = val);
+             _audioPlayer.setVolume(val); // Native volume takes 0.0 to 1.0
+          },
           onToggleLoop: (val) {
+            setState(() => _isLooping = val);
             _audioPlayer.setLoopMode(val ? LoopMode.one : LoopMode.off);
           },
           onToggleShuffle: (val) => setState(() => _isShuffling = val),
@@ -284,34 +456,324 @@ class _MainDashboardState extends State<MainDashboard> {
     );
   }
 
+  Widget _buildDummyThumbnail(Color color) {
+    return Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+      child: Icon(Icons.music_note, color: color),
+    );
+  }
+
   Widget _buildBody() {
-    // (Omitted for brevity - paste your EXACT _buildBody from before. It doesn't need to change!)
-    return Center(child: Text("Paste your _buildBody here!"));
+    final Widget fallbackThumbnail = Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(color: widget.activeTheme.primaryAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+      child: Icon(Icons.music_note, color: widget.activeTheme.primaryAccent),
+    );
+
+    switch (_currentView) {
+      case 'playlists':
+        return ListView.builder(
+          itemCount: _myPlaylists.length,
+          itemBuilder: (context, index) {
+            final playlist = _myPlaylists[index];
+            return ListTile(
+              leading: Icon(Icons.playlist_play, color: widget.activeTheme.primaryAccent, size: 40),
+              title: Text(playlist.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text('${playlist.tracks.length} songs', style: TextStyle(color: widget.activeTheme.textSecondary)),
+              onTap: () {
+                setState(() {
+                  _selectedPlaylistDetail = playlist;
+                  _currentView = 'playlist_detail';
+                });
+              },
+            );
+          },
+        );
+
+      case 'playlist_detail':
+        if (_selectedPlaylistDetail == null) return const Center(child: Text('No playlist selected'));
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: () {
+                      setState(() {
+                        _isEditingOrder = false;
+                        _selectedForReorder.clear();
+                        _currentView = 'playlists';
+                      });
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _isEditingOrder ? 'Select Order' : _selectedPlaylistDetail!.name,
+                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (_isEditingOrder) ...[
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.grey, size: 26),
+                      onPressed: () => setState(() {
+                        _selectedForReorder.clear();
+                        _isEditingOrder = false;
+                      }),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.check, color: widget.activeTheme.primaryAccent, size: 28),
+                      onPressed: () {
+                        if (_selectedForReorder.isNotEmpty) {
+                          setState(() {
+                            final unselected = _selectedPlaylistDetail!.tracks.where((t) => !_selectedForReorder.contains(t)).toList();
+                            _selectedPlaylistDetail!.tracks.clear();
+                            _selectedPlaylistDetail!.tracks.addAll(_selectedForReorder);
+                            _selectedPlaylistDetail!.tracks.addAll(unselected);
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playlist order updated!')));
+                        }
+                        setState(() {
+                          _selectedForReorder.clear();
+                          _isEditingOrder = false;
+                        });
+                      },
+                    ),
+                  ] else ...[
+                    IconButton(
+                      icon: Icon(Icons.edit, color: widget.activeTheme.primaryAccent, size: 26),
+                      onPressed: () => setState(() {
+                        _selectedForReorder.clear();
+                        _isEditingOrder = true;
+                      }),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.play_arrow_rounded, color: widget.activeTheme.primaryAccent, size: 28),
+                      onPressed: () {
+                        if (_selectedPlaylistDetail!.tracks.isNotEmpty) {
+                          _playTrack(_selectedPlaylistDetail!.tracks.first, playlist: _selectedPlaylistDetail);
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                      onPressed: () => _showDeletePlaylistDialog(context),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Expanded(
+              child: _selectedPlaylistDetail!.tracks.isEmpty
+                  ? const Center(child: Text('This playlist is empty.', style: TextStyle(color: Colors.grey)))
+                  : ListView.builder(
+                      itemCount: _selectedPlaylistDetail!.tracks.length,
+                      itemBuilder: (context, index) {
+                        final track = _selectedPlaylistDetail!.tracks[index];
+                        final isSelected = _selectedForReorder.contains(track);
+                        final selectIndex = _selectedForReorder.indexOf(track) + 1;
+
+                        return ListTile(
+                          leading: track.thumbnailUrl.isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
+                                )
+                              : fallbackThumbnail,
+                          title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text(track.channelTitle),
+                          trailing: _isEditingOrder
+                              ? (isSelected
+                                  ? CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: widget.activeTheme.primaryAccent,
+                                      child: Text('$selectIndex', style: TextStyle(color: widget.activeTheme.surface, fontWeight: FontWeight.bold, fontSize: 12)),
+                                    )
+                                  : const Icon(Icons.circle_outlined, color: Colors.grey))
+                              : IconButton(icon: const Icon(Icons.more_vert), onPressed: () => _showTrackMenu(track)),
+                          onTap: () {
+                            if (_isEditingOrder) {
+                              setState(() {
+                                if (isSelected) {
+                                  _selectedForReorder.remove(track);
+                                } else {
+                                  _selectedForReorder.add(track);
+                                }
+                              });
+                            } else {
+                              _playTrack(track, playlist: _selectedPlaylistDetail);
+                            }
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      case 'search':
+      default:
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search songs, artists, albums...',
+                  prefixIcon: const Icon(Icons.search),
+                  filled: true,
+                  fillColor: widget.activeTheme.searchBar,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
+                ),
+                onSubmitted: _executeSearch,
+              ),
+            ),
+            Expanded(
+              child: _searchResults.isEmpty
+                  ? Center(child: Icon(Icons.search, size: 80, color: widget.activeTheme.primaryAccent.withOpacity(0.5)))
+                  : ListView.builder(
+                      itemCount: _searchResults.length,
+                      itemBuilder: (context, index) {
+                        final track = _searchResults[index];
+                        return ListTile(
+                          leading: track.thumbnailUrl.isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
+                                )
+                              : fallbackThumbnail,
+                          title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text(track.channelTitle),
+                          trailing: IconButton(
+                            icon: Icon(Icons.more_vert, color: widget.activeTheme.primaryAccent),
+                            onPressed: () => _showTrackMenu(track),
+                          ),
+                          onTap: () => _playTrack(track, playlist: null),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Rhythmic Background Audio'), backgroundColor: Colors.transparent, elevation: 0),
+      appBar: AppBar(
+        title: Text(_currentView == 'search'
+            ? 'Search Music'
+            : _currentView == 'playlists'
+                ? 'My Playlists'
+                : _selectedPlaylistDetail?.name ?? 'Playlist'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       drawer: Drawer(
         backgroundColor: widget.activeTheme.surface,
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             DrawerHeader(
               decoration: BoxDecoration(color: widget.activeTheme.searchBar),
-              child: const Center(child: Text('Rhythmic Prototype', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.music_note, size: 40, color: widget.activeTheme.primaryAccent),
+                  const SizedBox(height: 10),
+                  const Text('Rhythmic Prototype', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
             ),
-            ListTile(title: const Text('Home / Search'), onTap: () { Navigator.pop(context); setState(() => _currentView = 'search'); }),
-            ListTile(title: const Text('My Playlists'), onTap: () { Navigator.pop(context); setState(() => _currentView = 'playlists'); }),
+            ListTile(
+              leading: Icon(Icons.home, color: widget.activeTheme.textPrimary),
+              title: const Text('Home / Search'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _currentView = 'search');
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.playlist_play, color: widget.activeTheme.textPrimary),
+              title: const Text('My Playlists'),
+              subtitle: Text('${_myPlaylists.length} playlists created', style: TextStyle(color: widget.activeTheme.textSecondary)),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _currentView = 'playlists');
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.add_box, color: widget.activeTheme.primaryAccent),
+              title: const Text('Create New Playlist'),
+              onTap: () {
+                Navigator.pop(context);
+                _showCreatePlaylistDialog(context);
+              },
+            ),
+            const Divider(color: Colors.grey),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Material(
+                color: widget.activeTheme.searchBar,
+                borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: widget.activeTheme.primaryAccent.withOpacity(0.3)),
+                  ),
+                  child: Theme(
+                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                    child: ExpansionTile(
+                      leading: Icon(Icons.palette, color: widget.activeTheme.primaryAccent),
+                      title: Text('Active Theme Layout', style: TextStyle(color: widget.activeTheme.textPrimary, fontSize: 16)),
+                      iconColor: widget.activeTheme.primaryAccent,
+                      collapsedIconColor: widget.activeTheme.primaryAccent,
+                      childrenPadding: const EdgeInsets.only(left: 16.0),
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.lens, color: Colors.deepPurpleAccent, size: 18),
+                          title: const Text('Deep Purple'),
+                          selected: widget.activeTheme == AppColors.deepPurple,
+                          onTap: () => widget.onThemeChanged(AppColors.deepPurple),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.lens, color: Colors.cyanAccent, size: 18),
+                          title: const Text('Cyber Blue'),
+                          selected: widget.activeTheme == AppColors.cyberBlue,
+                          onTap: () => widget.onThemeChanged(AppColors.cyberBlue),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.lens, color: Colors.greenAccent, size: 18),
+                          title: const Text('Forest Mint'),
+                          selected: widget.activeTheme == AppColors.forestMint,
+                          onTap: () => widget.onThemeChanged(AppColors.forestMint),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
+      // NOTICE: The Stack with the hidden YouTube Player is completely gone!
       body: Column(
         children: [
           Expanded(child: _buildBody()),
           if (_currentTrack != null)
             MiniPlayer(
-              player: _audioPlayer,
+              player: _audioPlayer, // Pass the native player
               track: _currentTrack!,
               activeTheme: widget.activeTheme,
               onTap: _openFullPlayerScreen,
@@ -328,7 +790,10 @@ class FullPlayerModalContent extends StatelessWidget {
   final Track track;
   final AppColors activeTheme;
   final bool hasPlaylist;
+  final bool isLooping;
   final bool isShuffling;
+  final double currentVolume;
+  final ValueChanged<double> onVolumeChanged;
   final ValueChanged<bool> onToggleLoop;
   final ValueChanged<bool> onToggleShuffle;
   final VoidCallback? onSkipNext;
@@ -341,7 +806,10 @@ class FullPlayerModalContent extends StatelessWidget {
     required this.track,
     required this.activeTheme,
     required this.hasPlaylist,
+    required this.isLooping,
     required this.isShuffling,
+    required this.currentVolume,
+    required this.onVolumeChanged,
     required this.onToggleLoop,
     required this.onToggleShuffle,
     this.onSkipNext,
@@ -358,6 +826,8 @@ class FullPlayerModalContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool isMobile = Theme.of(context).platform == TargetPlatform.android || Theme.of(context).platform == TargetPlatform.iOS;
+
     return FractionallySizedBox(
       heightFactor: 0.94,
       child: SafeArea(
@@ -395,7 +865,7 @@ class FullPlayerModalContent extends StatelessWidget {
               Align(alignment: Alignment.centerLeft, child: Text(track.channelTitle, style: TextStyle(color: activeTheme.textSecondary, fontSize: 15))),
               const SizedBox(height: 16),
               
-              // SEEK BAR
+              // LIVE NATIVE SEEK BAR
               StreamBuilder<Duration>(
                 stream: player.positionStream,
                 builder: (context, snapshot) {
@@ -437,13 +907,42 @@ class FullPlayerModalContent extends StatelessWidget {
               ),
               const Spacer(),
               
-              // MAIN CONTROLS
+              if (!isMobile) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Row(
+                    children: [
+                      Icon(currentVolume == 0 ? Icons.volume_off : Icons.volume_down, color: activeTheme.textSecondary, size: 20),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 2.0,
+                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5.0),
+                            activeTrackColor: activeTheme.textPrimary,
+                            inactiveTrackColor: activeTheme.searchBar,
+                          ),
+                          child: Slider(
+                            value: currentVolume,
+                            min: 0.0,
+                            max: 1.0,
+                            onChanged: onVolumeChanged,
+                          ),
+                        ),
+                      ),
+                      Icon(Icons.volume_up, color: activeTheme.textSecondary, size: 20),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // MAIN PLAYBACK CONTROLS
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   IconButton(iconSize: 32, icon: const Icon(Icons.skip_previous), color: hasPlaylist ? Colors.white : Colors.grey.withOpacity(0.3), onPressed: onSkipPrevious),
                   
-                  // PLAY/PAUSE SYNCED WITH NATIVE PLAYER
+                  // LIVE PLAY/PAUSE SYNCED WITH NATIVE PLAYER
                   StreamBuilder<PlayerState>(
                     stream: player.playerStateStream,
                     builder: (context, snapshot) {
@@ -472,6 +971,45 @@ class FullPlayerModalContent extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
+              
+              // SECONDARY CONTROLS
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: IconButton(
+                          iconSize: 24,
+                          icon: const Icon(Icons.shuffle),
+                          color: hasPlaylist ? (isShuffling ? activeTheme.primaryAccent : Colors.grey) : Colors.grey.withOpacity(0.3),
+                          onPressed: hasPlaylist ? () => onToggleShuffle(!isShuffling) : null,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 30),
+                    IconButton(
+                      icon: const Icon(Icons.more_horiz, size: 28, color: Colors.grey),
+                      onPressed: () {
+                        if (onOptionsTap != null) onOptionsTap!();
+                      },
+                    ),
+                    const SizedBox(width: 30),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: IconButton(
+                          iconSize: 24,
+                          icon: const Icon(Icons.loop),
+                          color: isLooping ? activeTheme.primaryAccent : Colors.grey,
+                          onPressed: () => onToggleLoop(!isLooping),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               const Spacer(),
             ],
           ),
@@ -499,7 +1037,7 @@ class MiniPlayer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // PROGRESS BAR
+            // LIVE MINI PROGRESS BAR
             StreamBuilder<Duration>(
               stream: player.positionStream,
               builder: (context, snapshot) {
@@ -519,7 +1057,9 @@ class MiniPlayer extends StatelessWidget {
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(4),
-                    child: Image.network(track.thumbnailUrl, width: 50, height: 45, fit: BoxFit.cover, errorBuilder: (c, e, s) => Icon(Icons.music_note, color: activeTheme.primaryAccent)),
+                    child: track.thumbnailUrl.isNotEmpty
+                        ? Image.network(track.thumbnailUrl, width: 50, height: 45, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(width: 50, height: 45, decoration: BoxDecoration(color: activeTheme.primaryAccent.withOpacity(0.2)), child: Icon(Icons.music_note, color: activeTheme.primaryAccent)))
+                        : Container(width: 50, height: 45, decoration: BoxDecoration(color: activeTheme.primaryAccent.withOpacity(0.2)), child: Icon(Icons.music_note, color: activeTheme.primaryAccent)),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -532,7 +1072,7 @@ class MiniPlayer extends StatelessWidget {
                       ],
                     ),
                   ),
-                  // MINI PLAY/PAUSE
+                  // LIVE MINI PLAY/PAUSE
                   StreamBuilder<PlayerState>(
                     stream: player.playerStateStream,
                     builder: (context, snapshot) {
