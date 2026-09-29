@@ -2,7 +2,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-// FIX: Hides the package's Playlist class to prevent collisions with your local model
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist; 
 
 import 'package:just_audio/just_audio.dart';
