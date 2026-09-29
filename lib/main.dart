@@ -201,15 +201,27 @@ class _MainDashboardState extends State<MainDashboard> {
     _showDebugNotification('Extracting stream for: ${track.title}...');
 
     try {
+      // 1. Get the manifest
       var manifest = await _ytExplode.videos.streamsClient.getManifest(track.id);
-      var audioStreamInfo = manifest.audioOnly.withHighestBitrate();
       
+      // 2. THE FIX: Force iOS-compatible MP4 streams ONLY!
+      var mp4Streams = manifest.audioOnly.where((stream) => stream.container == StreamContainer.mp4);
+      
+      if (mp4Streams.isEmpty) {
+        _showDebugNotification('Error: No iOS compatible stream found!');
+        return;
+      }
+      
+      var audioStreamInfo = mp4Streams.withHighestBitrate();
+      
+      // 3. Play the stream
       await _audioPlayer.setUrl(audioStreamInfo.url.toString());
       _audioPlayer.play();
       
       _showDebugNotification('Playing natively: ${track.title}');
     } catch (e) {
-      _showDebugNotification('Stream Extraction Error: $e');
+      // If just_audio throws an error, this will catch it
+      _showDebugNotification('Audio Error: $e');
     }
 
     if (showScreen) {
