@@ -198,30 +198,30 @@ class _MainDashboardState extends State<MainDashboard> {
       _playlistAnchor = playlist != null ? track : null;
     });
 
-    _showDebugNotification('Extracting stream for: ${track.title}...');
+    _showDebugNotification('1. Extracting...');
 
     try {
-      // 1. Get the manifest
       var manifest = await _ytExplode.videos.streamsClient.getManifest(track.id);
+      _showDebugNotification('2. Manifest grabbed!');
       
-      // 2. THE FIX: Force iOS-compatible MP4 streams ONLY!
       var mp4Streams = manifest.audioOnly.where((stream) => stream.container == StreamContainer.mp4);
       
       if (mp4Streams.isEmpty) {
-        _showDebugNotification('Error: No iOS compatible stream found!');
+        _showDebugNotification('Error: No compatible stream found!');
         return;
       }
       
       var audioStreamInfo = mp4Streams.withHighestBitrate();
+      _showDebugNotification('3. URL found! Loading audio...');
       
-      // 3. Play the stream
       await _audioPlayer.setUrl(audioStreamInfo.url.toString());
-      _audioPlayer.play();
       
-      _showDebugNotification('Playing natively: ${track.title}');
+      _audioPlayer.play();
+      _showDebugNotification('4. Playing natively!');
+      
     } catch (e) {
-      // If just_audio throws an error, this will catch it
-      _showDebugNotification('Audio Error: $e');
+      _showDebugNotification('Error: $e');
+      print('CRASH DETAILS: $e');
     }
 
     if (showScreen) {
