@@ -61,8 +61,7 @@ jobs:
       - name: Build iOS IPA
         run: |
           flutter build ipa --release \
-            --export-options-plist=ios/ExportOptions.plist \
-            --no-codesign
+            --export-options-plist=ios/ExportOptions.plist
 
       - name: Upload to App Store Connect / TestFlight
         env:
