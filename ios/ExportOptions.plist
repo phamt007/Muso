@@ -8,6 +8,13 @@
     <string>manual</string>
     <key>destination</key>
     <string>export</string>
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>com.tap007.rhythic</key>
+        <string>Rhythmic AppStore Profile</string>
+    </dict>
+    <key>signingCertificate</key>
+    <string>Apple Distribution</string>
     <key>manageAppVersionAndBuildNumber</key>
     <true/>
 </dict>
