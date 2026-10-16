@@ -19,9 +19,9 @@ class Track {
   };
 
   factory Track.fromJson(Map<String, dynamic> json) => Track(
-    id: json['id'],
-    title: json['title'],
-    channelTitle: json['channelTitle'],
-    thumbnailUrl: json['thumbnailUrl'],
+    id: json['id'] ?? '',
+    title: json['title'] ?? 'Unknown Title',
+    channelTitle: json['channelTitle'] ?? 'Unknown Artist',
+    thumbnailUrl: json['thumbnailUrl'] ?? '',
   );
 }

@@ -5,6 +5,7 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
+import 'storage_service.dart';
 
 import 'theme.dart';
 import 'widgets/mini_player.dart';
@@ -16,7 +17,6 @@ import 'playlist_model.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // This tells iOS: "Don't pause me, I am a dedicated media player"
   await JustAudioBackground.init(
     androidNotificationChannelId: 'com.tap007.rhythic.channel.audio',
     androidNotificationChannelName: 'Audio playback',
@@ -75,6 +75,8 @@ class _MainDashboardState extends State<MainDashboard> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   final YoutubeExplode _ytExplode = YoutubeExplode();
 
+  final StorageService _storage = StorageService();
+
   List<Track> _searchResults = [];
   String _currentView = 'search';
 
@@ -98,6 +100,12 @@ class _MainDashboardState extends State<MainDashboard> {
     super.initState();
     _initAudioSession();
     
+    _storage.loadPlaylists().then((savedData) {
+      if (mounted) {
+        setState(() => _myPlaylists.addAll(savedData));
+      }
+    });
+
     _audioPlayer.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed) {
         _playNextTrack();
@@ -242,17 +250,24 @@ class _MainDashboardState extends State<MainDashboard> {
     setState(() {
       _myPlaylists.add(newPlaylist);
     });
+
+    _storage.savePlaylists(_myPlaylists);
+
     if (initialTrack != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added to ${newPlaylist.name}')),
       );
     }
+    
   }
 
   void _addTrackToPlaylist(Track track, Playlist playlist) {
     setState(() {
       playlist.tracks.add(track);
     });
+
+    _storage.savePlaylists(_myPlaylists);
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Added to ${playlist.name}')),
     );

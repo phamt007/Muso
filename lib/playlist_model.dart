@@ -15,7 +15,9 @@ class Playlist {
   };
 
   factory Playlist.fromJson(Map<String, dynamic> json) => Playlist(
-    name: json['name'],
-    tracks: (json['tracks'] as List).map((item) => Track.fromJson(item)).toList(),
+    name: json['name'] ?? 'Unnamed Playlist',
+    tracks: json['tracks'] != null 
+        ? (json['tracks'] as List).map((item) => Track.fromJson(item as Map<String, dynamic>)).toList()
+        : [],
   );
 }
