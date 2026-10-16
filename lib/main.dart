@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist; 
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 
@@ -14,10 +15,17 @@ import 'playlist_model.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // This tells iOS: "Don't pause me, I am a dedicated media player"
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.tap007.rhythic.channel.audio',
+    androidNotificationChannelName: 'Audio playback',
+    androidNotificationOngoing: true,
+  );
+  
   await dotenv.load(fileName: ".env");
   runApp(const MusicApp());
 }
-
 class MusicApp extends StatefulWidget {
   const MusicApp({super.key});
 
@@ -199,6 +207,12 @@ class _MainDashboardState extends State<MainDashboard> {
             headers: {
               'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
             },
+            tag: MediaItem(
+              id: track.id,
+              title: track.title,
+              artist: track.channelTitle,
+              artUri: Uri.parse(track.thumbnailUrl),
+            ),
           ),
         );
         
