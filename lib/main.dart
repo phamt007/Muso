@@ -211,14 +211,28 @@ class _MainDashboardState extends State<MainDashboard> {
         return;
       }
       
-      var audioStreamInfo = mp4Streams.withHighestBitrate();
-      _showDebugNotification('3. URL found! Loading audio...');
-      
-      await _audioPlayer.setUrl(audioStreamInfo.url.toString());
-      
-      _audioPlayer.play();
-      _showDebugNotification('4. Playing natively!');
-      
+      try {
+        var audioStreamInfo = mp4Streams.withHighestBitrate();
+        _showDebugNotification('3. URL found! Loading audio...');
+        
+        // Spoof a standard Safari web browser so YouTube doesn't block iOS AVPlayer
+        await _audioPlayer.setAudioSource(
+          AudioSource.uri(
+            Uri.parse(audioStreamInfo.url.toString()),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+            },
+          ),
+        );
+        
+        _audioPlayer.play();
+        _showDebugNotification('4. Playing natively!');
+        
+      } catch (e) {
+        // If it fails, this will catch the exact error and show it on your screen
+        _showDebugNotification('Error loading audio: $e');
+        print('Detailed audio error: $e');
+      }
     } catch (e) {
       _showDebugNotification('Error: $e');
       print('CRASH DETAILS: $e');
