@@ -1,21 +1,21 @@
 import 'track_model.dart';
-import 'dart:convert';
 
 class Playlist {
   final String name;
   final List<Track> tracks;
 
-  Playlist({required this.name, required this.tracks});
+  Playlist({
+    required this.name,
+    required this.tracks,
+  });
 
-  Map<String, dynamic> toMap() {
-    return {
-      'name': name,
-      'tracks': tracks.map((track) => {
-        'id': track.id,
-        'title': track.title,
-        'channelTitle': track.channelTitle,
-        'thumbnailUrl': track.thumbnailUrl,
-      }).toList(),
-    };
-  }
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'tracks': tracks.map((t) => t.toJson()).toList(),
+  };
+
+  factory Playlist.fromJson(Map<String, dynamic> json) => Playlist(
+    name: json['name'],
+    tracks: (json['tracks'] as List).map((item) => Track.fromJson(item)).toList(),
+  );
 }
