@@ -147,9 +147,10 @@ class _MainDashboardState extends State<MainDashboard> {
 
   void _playNextTrack() {
     if (_queue.isNotEmpty) {
-      _playTrack(_queue.removeAt(0), showScreen: false);
+      _playTrack(_queue.removeAt(0), showScreen: false, isFromQueue: true);
       return;
     }
+    
     if (_activePlaylist == null || _playlistAnchor == null) return;
     final tracks = _activePlaylist!.tracks;
     if (tracks.isEmpty) return;
@@ -180,12 +181,15 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-  Future<void> _playTrack(Track track, {Playlist? playlist, bool showScreen = true}) async {
+  Future<void> _playTrack(Track track, {Playlist? playlist, bool showScreen = true, bool isFromQueue = false}) async {
     setState(() {
-      _currentTrack = track;
+    _currentTrack = track;
+    
+    if (!isFromQueue) {
       _activePlaylist = playlist;
       _queue.clear();
       _playlistAnchor = playlist != null ? track : null;
+    }
     });
 
     _showDebugNotification('1. Extracting...');
