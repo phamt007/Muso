@@ -1,40 +1,17 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist; 
-
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 
+import 'theme.dart';
+import 'widgets/mini_player.dart';
+import 'widgets/full_player.dart';
 import 'youtube_service.dart';
 import 'track_model.dart';
 import 'playlist_model.dart';
 
-// === DUMMY DATA MODELS ===
-class AppColors {
-  final Color background;
-  final Color surface;
-  final Color primaryAccent;
-  final Color searchBar;
-  final Color textPrimary;
-  final Color textSecondary;
-
-  const AppColors({
-    required this.background,
-    required this.surface,
-    required this.primaryAccent,
-    required this.searchBar,
-    required this.textPrimary,
-    required this.textSecondary,
-  });
-
-  static const deepPurple = AppColors(background: Color(0xFF121212), surface: Color(0xFF1E1E1E), primaryAccent: Colors.deepPurpleAccent, searchBar: Color(0xFF2C2C2C), textPrimary: Colors.white, textSecondary: Colors.grey);
-  static const cyberBlue = AppColors(background: Color(0xFF0A0F24), surface: Color(0xFF111936), primaryAccent: Colors.cyanAccent, searchBar: Color(0xFF1A264F), textPrimary: Colors.white, textSecondary: Colors.grey);
-  static const forestMint = AppColors(background: Color(0xFF0F1A15), surface: Color(0xFF16261E), primaryAccent: Colors.greenAccent, searchBar: Color(0xFF1F362A), textPrimary: Colors.white, textSecondary: Colors.grey);
-}
-
-// === MAIN APP ENTRY ===
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
@@ -87,7 +64,6 @@ class _MainDashboardState extends State<MainDashboard> {
   final YouTubeService _apiService = YouTubeService();
   final TextEditingController _searchController = TextEditingController();
   
-  // === NATIVE AUDIO ENGINES ===
   final AudioPlayer _audioPlayer = AudioPlayer();
   final YoutubeExplode _ytExplode = YoutubeExplode();
 
@@ -107,14 +83,13 @@ class _MainDashboardState extends State<MainDashboard> {
 
   bool _isLooping = false;
   bool _isShuffling = false;
-  double _globalVolume = 1.0; // just_audio uses 0.0 to 1.0 for volume
+  double _globalVolume = 1.0; 
 
   @override
   void initState() {
     super.initState();
     _initAudioSession();
     
-    // Listen for when a track naturally finishes to play the next one
     _audioPlayer.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed) {
         _playNextTrack();
@@ -189,7 +164,6 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-  // === NATIVE STREAM SCRAPING ===
   Future<void> _playTrack(Track track, {Playlist? playlist, bool showScreen = true}) async {
     setState(() {
       _currentTrack = track;
@@ -204,18 +178,21 @@ class _MainDashboardState extends State<MainDashboard> {
       var manifest = await _ytExplode.videos.streamsClient.getManifest(track.id);
       _showDebugNotification('2. Manifest grabbed!');
       
-      var mp4Streams = manifest.audioOnly.where((stream) => stream.container == StreamContainer.mp4);
+      // FIX: Request muxed (Video+Audio) MP4 streams instead of audio-only DASH streams
+      var mp4Streams = manifest.muxed.where((stream) => stream.container.name == 'mp4');
       
       if (mp4Streams.isEmpty) {
-        _showDebugNotification('Error: No compatible stream found!');
+        _showDebugNotification('Error: No compatible iOS stream found!');
         return;
       }
       
       try {
-        var audioStreamInfo = mp4Streams.withHighestBitrate();
+        // Use the lowest bitrate to save internet data, since we only need the audio track
+        var audioStreamInfo = mp4Streams.reduce(
+          (a, b) => a.bitrate.bitsPerSecond <= b.bitrate.bitsPerSecond ? a : b,
+        );
         _showDebugNotification('3. URL found! Loading audio...');
         
-        // Spoof a standard Safari web browser so YouTube doesn't block iOS AVPlayer
         await _audioPlayer.setAudioSource(
           AudioSource.uri(
             Uri.parse(audioStreamInfo.url.toString()),
@@ -229,7 +206,6 @@ class _MainDashboardState extends State<MainDashboard> {
         _showDebugNotification('4. Playing natively!');
         
       } catch (e) {
-        // If it fails, this will catch the exact error and show it on your screen
         _showDebugNotification('Error loading audio: $e');
         print('Detailed audio error: $e');
       }
@@ -457,7 +433,7 @@ class _MainDashboardState extends State<MainDashboard> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (bottomSheetContext) {
         return FullPlayerModalContent(
-          player: _audioPlayer, // Pass the native player instead of Youtube controller
+          player: _audioPlayer, 
           track: _currentTrack!,
           activeTheme: widget.activeTheme,
           hasPlaylist: _activePlaylist != null,
@@ -466,7 +442,7 @@ class _MainDashboardState extends State<MainDashboard> {
           currentVolume: _globalVolume,
           onVolumeChanged: (val) {
              setState(() => _globalVolume = val);
-             _audioPlayer.setVolume(val); // Native volume takes 0.0 to 1.0
+             _audioPlayer.setVolume(val); 
           },
           onToggleLoop: (val) {
             setState(() => _isLooping = val);
@@ -792,333 +768,17 @@ class _MainDashboardState extends State<MainDashboard> {
           ],
         ),
       ),
-      // NOTICE: The Stack with the hidden YouTube Player is completely gone!
       body: Column(
         children: [
           Expanded(child: _buildBody()),
           if (_currentTrack != null)
             MiniPlayer(
-              player: _audioPlayer, // Pass the native player
+              player: _audioPlayer, 
               track: _currentTrack!,
               activeTheme: widget.activeTheme,
               onTap: _openFullPlayerScreen,
             ),
         ],
-      ),
-    );
-  }
-}
-
-// === FULL PLAYER USING JUST_AUDIO ===
-class FullPlayerModalContent extends StatelessWidget {
-  final AudioPlayer player;
-  final Track track;
-  final AppColors activeTheme;
-  final bool hasPlaylist;
-  final bool isLooping;
-  final bool isShuffling;
-  final double currentVolume;
-  final ValueChanged<double> onVolumeChanged;
-  final ValueChanged<bool> onToggleLoop;
-  final ValueChanged<bool> onToggleShuffle;
-  final VoidCallback? onSkipNext;
-  final VoidCallback? onSkipPrevious;
-  final VoidCallback? onOptionsTap;
-
-  const FullPlayerModalContent({
-    super.key,
-    required this.player,
-    required this.track,
-    required this.activeTheme,
-    required this.hasPlaylist,
-    required this.isLooping,
-    required this.isShuffling,
-    required this.currentVolume,
-    required this.onVolumeChanged,
-    required this.onToggleLoop,
-    required this.onToggleShuffle,
-    this.onSkipNext,
-    this.onSkipPrevious,
-    this.onOptionsTap,
-  });
-
-  String _formatDuration(Duration? duration) {
-    if (duration == null) return "00:00";
-    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bool isMobile = Theme.of(context).platform == TargetPlatform.android || Theme.of(context).platform == TargetPlatform.iOS;
-
-    return FractionallySizedBox(
-      heightFactor: 0.94,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-          child: Column(
-            children: [
-              Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(10)))),
-              Align(alignment: Alignment.centerLeft, child: IconButton(icon: const Icon(Icons.keyboard_arrow_down, size: 30), onPressed: () => Navigator.pop(context))),
-              const Spacer(),
-              
-              // ALBUM ART
-              Container(
-                width: double.infinity,
-                constraints: const BoxConstraints(maxHeight: 300),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [BoxShadow(color: activeTheme.primaryAccent.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 8))],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: track.thumbnailUrl.isNotEmpty
-                      ? Image.network(track.thumbnailUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => Icon(Icons.music_note, size: 120, color: activeTheme.primaryAccent))
-                      : Container(color: activeTheme.searchBar, child: Icon(Icons.music_note, size: 120, color: activeTheme.primaryAccent)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              
-              // TITLES
-              Align(alignment: Alignment.centerLeft, child: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
-              const SizedBox(height: 4),
-              Align(alignment: Alignment.centerLeft, child: Text(track.channelTitle, style: TextStyle(color: activeTheme.textSecondary, fontSize: 15))),
-              const SizedBox(height: 16),
-              
-              // LIVE NATIVE SEEK BAR
-              StreamBuilder<Duration>(
-                stream: player.positionStream,
-                builder: (context, snapshot) {
-                  final position = snapshot.data ?? Duration.zero;
-                  final duration = player.duration ?? Duration.zero;
-                  
-                  return Column(
-                    children: [
-                      SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          trackHeight: 4.0,
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0),
-                          activeTrackColor: activeTheme.primaryAccent,
-                          inactiveTrackColor: activeTheme.searchBar,
-                          thumbColor: activeTheme.primaryAccent,
-                        ),
-                        child: Slider(
-                          value: position.inSeconds.toDouble(),
-                          min: 0.0,
-                          max: (duration.inSeconds > 0) ? duration.inSeconds.toDouble() : 1.0,
-                          onChanged: (val) {
-                            player.seek(Duration(seconds: val.toInt()));
-                          },
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(_formatDuration(position), style: TextStyle(color: activeTheme.textSecondary, fontSize: 12)),
-                            Text(_formatDuration(duration), style: TextStyle(color: activeTheme.textSecondary, fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                }
-              ),
-              const Spacer(),
-              
-              if (!isMobile) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Row(
-                    children: [
-                      Icon(currentVolume == 0 ? Icons.volume_off : Icons.volume_down, color: activeTheme.textSecondary, size: 20),
-                      Expanded(
-                        child: SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 2.0,
-                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5.0),
-                            activeTrackColor: activeTheme.textPrimary,
-                            inactiveTrackColor: activeTheme.searchBar,
-                          ),
-                          child: Slider(
-                            value: currentVolume,
-                            min: 0.0,
-                            max: 1.0,
-                            onChanged: onVolumeChanged,
-                          ),
-                        ),
-                      ),
-                      Icon(Icons.volume_up, color: activeTheme.textSecondary, size: 20),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              // MAIN PLAYBACK CONTROLS
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  IconButton(iconSize: 32, icon: const Icon(Icons.skip_previous), color: hasPlaylist ? Colors.white : Colors.grey.withOpacity(0.3), onPressed: onSkipPrevious),
-                  
-                  // LIVE PLAY/PAUSE SYNCED WITH NATIVE PLAYER
-                  StreamBuilder<PlayerState>(
-                    stream: player.playerStateStream,
-                    builder: (context, snapshot) {
-                      final playerState = snapshot.data;
-                      final playing = playerState?.playing ?? false;
-                      return CircleAvatar(
-                        radius: 32,
-                        backgroundColor: activeTheme.primaryAccent,
-                        child: IconButton(
-                          iconSize: 32,
-                          color: activeTheme.background,
-                          icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                          onPressed: () {
-                            if (playing) {
-                              player.pause();
-                            } else {
-                              player.play();
-                            }
-                          },
-                        ),
-                      );
-                    }
-                  ),
-                  
-                  IconButton(iconSize: 32, icon: const Icon(Icons.skip_next), color: onSkipNext != null ? Colors.white : Colors.grey.withOpacity(0.3), onPressed: onSkipNext),
-                ],
-              ),
-              const SizedBox(height: 16),
-              
-              // SECONDARY CONTROLS
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: IconButton(
-                          iconSize: 24,
-                          icon: const Icon(Icons.shuffle),
-                          color: hasPlaylist ? (isShuffling ? activeTheme.primaryAccent : Colors.grey) : Colors.grey.withOpacity(0.3),
-                          onPressed: hasPlaylist ? () => onToggleShuffle(!isShuffling) : null,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 30),
-                    IconButton(
-                      icon: const Icon(Icons.more_horiz, size: 28, color: Colors.grey),
-                      onPressed: () {
-                        if (onOptionsTap != null) onOptionsTap!();
-                      },
-                    ),
-                    const SizedBox(width: 30),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: IconButton(
-                          iconSize: 24,
-                          icon: const Icon(Icons.loop),
-                          color: isLooping ? activeTheme.primaryAccent : Colors.grey,
-                          onPressed: () => onToggleLoop(!isLooping),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// === MINI PLAYER USING JUST_AUDIO ===
-class MiniPlayer extends StatelessWidget {
-  final AudioPlayer player;
-  final Track track;
-  final AppColors activeTheme;
-  final VoidCallback onTap;
-
-  const MiniPlayer({super.key, required this.player, required this.track, required this.activeTheme, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        color: activeTheme.surface,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // LIVE MINI PROGRESS BAR
-            StreamBuilder<Duration>(
-              stream: player.positionStream,
-              builder: (context, snapshot) {
-                final position = snapshot.data?.inSeconds.toDouble() ?? 0.0;
-                final duration = player.duration?.inSeconds.toDouble() ?? 1.0;
-                return LinearProgressIndicator(
-                  value: (duration > 0) ? position / duration : 0.0,
-                  backgroundColor: activeTheme.searchBar,
-                  valueColor: AlwaysStoppedAnimation<Color>(activeTheme.primaryAccent),
-                  minHeight: 2.0,
-                );
-              }
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-              child: Row(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: track.thumbnailUrl.isNotEmpty
-                        ? Image.network(track.thumbnailUrl, width: 50, height: 45, fit: BoxFit.cover, errorBuilder: (c, e, s) => Container(width: 50, height: 45, decoration: BoxDecoration(color: activeTheme.primaryAccent.withOpacity(0.2)), child: Icon(Icons.music_note, color: activeTheme.primaryAccent)))
-                        : Container(width: 50, height: 45, decoration: BoxDecoration(color: activeTheme.primaryAccent.withOpacity(0.2)), child: Icon(Icons.music_note, color: activeTheme.primaryAccent)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        Text(track.channelTitle, style: TextStyle(color: activeTheme.textSecondary, fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                  // LIVE MINI PLAY/PAUSE
-                  StreamBuilder<PlayerState>(
-                    stream: player.playerStateStream,
-                    builder: (context, snapshot) {
-                      final playing = snapshot.data?.playing ?? false;
-                      return IconButton(
-                        icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                        onPressed: () {
-                          if (playing) {
-                            player.pause();
-                          } else {
-                            player.play();
-                          }
-                        },
-                      );
-                    }
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

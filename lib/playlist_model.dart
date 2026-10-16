@@ -7,7 +7,6 @@ class Playlist {
 
   Playlist({required this.name, required this.tracks});
 
-  // Convert Playlist object to a Map for JSON storage
   Map<String, dynamic> toMap() {
     return {
       'name': name,
