@@ -6,6 +6,7 @@ import 'package:just_audio_background/just_audio_background.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
 import 'storage_service.dart';
+import 'dart:async';
 
 import 'theme.dart';
 import 'widgets/mini_player.dart';
@@ -77,6 +78,8 @@ class _MainDashboardState extends State<MainDashboard> {
 
   final StorageService _storage = StorageService();
 
+  StreamSubscription? _positionSubscription;
+
   List<Track> _searchResults = [];
   String _currentView = 'search';
 
@@ -116,11 +119,10 @@ class _MainDashboardState extends State<MainDashboard> {
       }
     });
 
-    _audioPlayer.positionStream.listen((position) {
+    _positionSubscription =_audioPlayer.positionStream.listen((position) {
       final duration = _audioPlayer.duration;
       if (duration != null && position != Duration.zero) {
-        // If there are 3 or fewer seconds left, and we haven't started preloading yet
-        if (duration.inSeconds - position.inSeconds <= 3 && !_isPreloadingNext) {
+        if (duration.inSeconds - position.inSeconds <= 5 && !_isPreloadingNext) {
           _preloadNextTrack();
         }
       }
@@ -134,6 +136,7 @@ class _MainDashboardState extends State<MainDashboard> {
 
   @override
   void dispose() {
+    _positionSubscription?.cancel();
     _audioPlayer.dispose();
     _ytExplode.close();
     super.dispose();
