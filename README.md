@@ -1,10 +1,8 @@
-# Rhythmic
+# Muso
 
-A high-performance, API-independent iOS music player built with Flutter. Rhythmic streams audio directly from YouTube using custom extraction techniques, featuring native background playback and a custom pre-warming engine designed to achieve zero-latency track transitions.
+A high-performance, API-independent iOS music player built with Flutter. Muso streams audio directly from YouTube using custom extraction techniques, featuring native background playback and a custom pre-warming engine designed to achieve zero-latency track transitions.
 
 ## Features
-
-* **API-Free Streaming:** Bypasses Google YouTube API rate limits and key dependencies via dynamic extraction of raw `.mp4` muxed audio streams.
 * **Zero-Latency Pre-warmer:** Custom background caching engine that listens to native player streams and silently extracts the subsequent track's URL prior to the current track's completion, eliminating network loading gaps.
 * **Native iOS Integration:** Full background audio support and lock-screen media controls utilizing `audio_session` and `just_audio_background`. Employs custom iOS `User-Agent` header routing to comply with Apple's native AVPlayer stream requirements.
 * **Algorithmic Search:** Queries are dynamically filtered and sorted by view count to prioritize high-quality, official audio tracks.
@@ -37,4 +35,4 @@ To ensure Apple's native AVPlayer accepts the scraped URLs, Rhythmic strictly fi
 
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/yourusername/rhythmic.git](https://github.com/yourusername/rhythmic.git)
+   git clone [https://github.com/yourusername/muso.git](https://github.com/yourusername/muso.git)
