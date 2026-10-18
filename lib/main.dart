@@ -86,6 +86,10 @@ class _MainDashboardState extends State<MainDashboard> {
   bool _isEditingOrder = false;
   final List<Track> _selectedForReorder = [];
 
+  bool _isPreloadingNext = false;
+  Track? _preloadedNextTrack;
+  String? _preloadedNextUrl;
+
   Track? _currentTrack;
   Playlist? _activePlaylist;
   Track? _playlistAnchor;
@@ -109,6 +113,16 @@ class _MainDashboardState extends State<MainDashboard> {
     _audioPlayer.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed) {
         _playNextTrack();
+      }
+    });
+
+    _audioPlayer.positionStream.listen((position) {
+      final duration = _audioPlayer.duration;
+      if (duration != null && position != Duration.zero) {
+        // If there are 3 or fewer seconds left, and we haven't started preloading yet
+        if (duration.inSeconds - position.inSeconds <= 3 && !_isPreloadingNext) {
+          _preloadNextTrack();
+        }
       }
     });
   }
@@ -143,6 +157,40 @@ class _MainDashboardState extends State<MainDashboard> {
         margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16), 
       ),
     );
+  }
+
+  Future<void> _preloadNextTrack() async {
+    _isPreloadingNext = true;
+    
+    Track? nextTrack;
+    if (_queue.isNotEmpty) {
+      nextTrack = _queue.first;
+    } else if (_activePlaylist != null && _playlistAnchor != null && !_isShuffling) {
+      final tracks = _activePlaylist!.tracks;
+      int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
+      if (currentIndex != -1 && currentIndex < tracks.length - 1) {
+        nextTrack = tracks[currentIndex + 1];
+      } else if (tracks.isNotEmpty) {
+        nextTrack = tracks.first;
+      }
+    }
+
+    if (nextTrack == null) return;
+    _preloadedNextTrack = nextTrack;
+
+    try {
+      final manifest = await _ytExplode.videos.streamsClient.getManifest(nextTrack.id);
+      var mp4Streams = manifest.muxed.where((stream) => stream.container.name == 'mp4');
+      
+      if (mp4Streams.isNotEmpty) {
+        var audioStreamInfo = mp4Streams.reduce(
+          (a, b) => a.bitrate.bitsPerSecond <= b.bitrate.bitsPerSecond ? a : b,
+        );
+        _preloadedNextUrl = audioStreamInfo.url.toString();
+      }
+    } catch (e) {
+      print("Preload failed: $e");
+    }
   }
 
   void _playNextTrack() {
@@ -183,58 +231,62 @@ class _MainDashboardState extends State<MainDashboard> {
 
   Future<void> _playTrack(Track track, {Playlist? playlist, bool showScreen = true, bool isFromQueue = false}) async {
     setState(() {
-    _currentTrack = track;
-    
-    if (!isFromQueue) {
-      _activePlaylist = playlist;
-      _queue.clear();
-      _playlistAnchor = playlist != null ? track : null;
-    }
+      _currentTrack = track;
+      
+      if (!isFromQueue) {
+        _activePlaylist = playlist;
+        _queue.clear();
+        _playlistAnchor = playlist != null ? track : null;
+      }
     });
 
-    _showDebugNotification('1. Extracting...');
+    _showDebugNotification('1. Preparing track...');
+    String audioUrl = '';
 
     try {
-      var manifest = await _ytExplode.videos.streamsClient.getManifest(track.id);
-      _showDebugNotification('2. Manifest grabbed!');
-      
-      // FIX: Request muxed (Video+Audio) MP4 streams instead of audio-only DASH streams
-      var mp4Streams = manifest.muxed.where((stream) => stream.container.name == 'mp4');
-      
-      if (mp4Streams.isEmpty) {
-        _showDebugNotification('Error: No compatible iOS stream found!');
-        return;
-      }
-      
-      try {
-        // Use the lowest bitrate to save internet data, since we only need the audio track
+      if (_preloadedNextTrack?.id == track.id && _preloadedNextUrl != null) {
+        audioUrl = _preloadedNextUrl!;
+        _showDebugNotification('2. Used pre-warmed URL!');
+      } else {
+        // B. Normal extraction fallback if not pre-warmed
+        _showDebugNotification('2. Extracting manifest...');
+        var manifest = await _ytExplode.videos.streamsClient.getManifest(track.id);
+        var mp4Streams = manifest.muxed.where((stream) => stream.container.name == 'mp4');
+        
+        if (mp4Streams.isEmpty) {
+          _showDebugNotification('Error: No compatible iOS stream found!');
+          return;
+        }
+        
         var audioStreamInfo = mp4Streams.reduce(
           (a, b) => a.bitrate.bitsPerSecond <= b.bitrate.bitsPerSecond ? a : b,
         );
-        _showDebugNotification('3. URL found! Loading audio...');
-        
-        await _audioPlayer.setAudioSource(
-          AudioSource.uri(
-            Uri.parse(audioStreamInfo.url.toString()),
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-            },
-            tag: MediaItem(
-              id: track.id,
-              title: track.title,
-              artist: track.channelTitle,
-              artUri: Uri.parse(track.thumbnailUrl),
-            ),
-          ),
-        );
-        
-        _audioPlayer.play();
-        _showDebugNotification('4. Playing natively!');
-        
-      } catch (e) {
-        _showDebugNotification('Error loading audio: $e');
-        print('Detailed audio error: $e');
+        audioUrl = audioStreamInfo.url.toString();
       }
+
+      _isPreloadingNext = false;
+      _preloadedNextTrack = null;
+      _preloadedNextUrl = null;
+
+      _showDebugNotification('3. Loading audio...');
+      await _audioPlayer.setAudioSource(
+        AudioSource.uri(
+          Uri.parse(audioUrl),
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+          },
+          tag: MediaItem(
+            id: track.id,
+            title: track.title,
+            artist: track.channelTitle,
+            artUri: Uri.parse(track.thumbnailUrl),
+          ),
+        ),
+      );
+      
+      _audioPlayer.play();
+      _showDebugNotification('4. Playing natively!');
+      
     } catch (e) {
       _showDebugNotification('Error: $e');
       print('CRASH DETAILS: $e');
@@ -487,15 +539,6 @@ class _MainDashboardState extends State<MainDashboard> {
           onOptionsTap: () => _showTrackMenu(_currentTrack!),
         );
       },
-    );
-  }
-
-  Widget _buildDummyThumbnail(Color color) {
-    return Container(
-      width: 50,
-      height: 50,
-      decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-      child: Icon(Icons.music_note, color: color),
     );
   }
 
