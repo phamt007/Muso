@@ -122,7 +122,7 @@ class _MainDashboardState extends State<MainDashboard> {
     _positionSubscription =_audioPlayer.positionStream.listen((position) {
       final duration = _audioPlayer.duration;
       if (duration != null && position != Duration.zero) {
-        if (duration.inSeconds - position.inSeconds <= 5 && !_isPreloadingNext) {
+        if (duration.inSeconds - position.inSeconds <= 10 && !_isPreloadingNext) {
           _preloadNextTrack();
         }
       }
@@ -190,6 +190,8 @@ class _MainDashboardState extends State<MainDashboard> {
           (a, b) => a.bitrate.bitsPerSecond <= b.bitrate.bitsPerSecond ? a : b,
         );
         _preloadedNextUrl = audioStreamInfo.url.toString();
+        
+        _showDebugNotification('PRE-WARMER: URL secured for ${nextTrack.title}!');
       }
     } catch (e) {
       print("Preload failed: $e");
