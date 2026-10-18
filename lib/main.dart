@@ -772,7 +772,7 @@ class _MainDashboardState extends State<MainDashboard> {
                 children: [
                   Icon(Icons.music_note, size: 40, color: widget.activeTheme.primaryAccent),
                   const SizedBox(height: 10),
-                  const Text('Rhythmic Prototype', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text('Muso', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
