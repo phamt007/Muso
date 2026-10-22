@@ -119,6 +119,11 @@ class _MainDashboardState extends State<MainDashboard> {
       }
     });
 
+    _audioPlayer.processingStateStream
+       .distinct()
+       .where((s) => s == ProcessingState.completed)
+       .listen((_) => _playNextTrack());
+
     _positionSubscription =_audioPlayer.positionStream.listen((position) {
       final duration = _audioPlayer.duration;
       if (duration != null && position != Duration.zero) {
@@ -498,6 +503,7 @@ class _MainDashboardState extends State<MainDashboard> {
                           _selectedForReorder.clear();
                           _isEditingOrder = false;
                           _myPlaylists.remove(_selectedPlaylistDetail);
+                          _storage.savePlaylists(_myPlaylists);
                           _currentView = 'playlists';
                         });
                       },
@@ -619,6 +625,7 @@ class _MainDashboardState extends State<MainDashboard> {
                             _selectedPlaylistDetail!.tracks.clear();
                             _selectedPlaylistDetail!.tracks.addAll(_selectedForReorder);
                             _selectedPlaylistDetail!.tracks.addAll(unselected);
+                            _storage.savePlaylists(_myPlaylists);
                           });
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playlist order updated!')));
                         }
