@@ -112,13 +112,7 @@ class _MainDashboardState extends State<MainDashboard> {
         setState(() => _myPlaylists.addAll(savedData));
       }
     });
-
-    _audioPlayer.playerStateStream.listen((state) {
-      if (state.processingState == ProcessingState.completed) {
-        _playNextTrack();
-      }
-    });
-
+    
     _audioPlayer.processingStateStream
        .distinct()
        .where((s) => s == ProcessingState.completed)

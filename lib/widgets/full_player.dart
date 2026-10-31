@@ -17,6 +17,7 @@ class FullPlayerModalContent extends StatelessWidget {
   final VoidCallback? onSkipNext;
   final VoidCallback? onSkipPrevious;
   final VoidCallback? onOptionsTap;
+  
 
   const FullPlayerModalContent({
     super.key,
@@ -83,6 +84,8 @@ class FullPlayerModalContent extends StatelessWidget {
                 builder: (context, snapshot) {
                   final position = snapshot.data ?? Duration.zero;
                   final duration = player.duration ?? Duration.zero;
+                  final maxSecs = duration.inSeconds > 0 ? duration.inSeconds.toDouble() : 1.0;
+                  final sliderValue = position.inSeconds.toDouble().clamp(0.0, maxSecs);
                   
                   return Column(
                     children: [
@@ -95,9 +98,9 @@ class FullPlayerModalContent extends StatelessWidget {
                           thumbColor: activeTheme.primaryAccent,
                         ),
                         child: Slider(
-                          value: position.inSeconds.toDouble(),
+                          value: sliderValue,
                           min: 0.0,
-                          max: (duration.inSeconds > 0) ? duration.inSeconds.toDouble() : 1.0,
+                          max: maxSecs,
                           onChanged: (val) {
                             player.seek(Duration(seconds: val.toInt()));
                           },
