@@ -74,7 +74,12 @@ class _MainDashboardState extends State<MainDashboard> {
   final TextEditingController _searchController = TextEditingController();
   
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final YoutubeExplode _ytExplode = YoutubeExplode();
+  
+  YoutubeExplode _ytExplode = YoutubeExplode();
+  int _playRequestId = 0;
+  int _consecutiveFailures = 0;
+  String? _preloadAttemptedFor;
+  StreamSubscription? _stateSub;
 
   final StorageService _storage = StorageService();
 
@@ -116,24 +121,32 @@ class _MainDashboardState extends State<MainDashboard> {
   void initState() {
     super.initState();
     _initAudioSession();
-    
+
     _storage.loadPlaylists().then((savedData) {
       if (mounted) {
         setState(() => _myPlaylists.addAll(savedData));
       }
     });
-    
-    _audioPlayer.processingStateStream
-       .distinct()
-       .where((s) => s == ProcessingState.completed)
-       .listen((_) => _playNextTrack());
 
-    _positionSubscription =_audioPlayer.positionStream.listen((position) {
+    _stateSub = _audioPlayer.processingStateStream
+        .distinct()
+        .listen((s) {
+      debugPrint('STATE: $s');
+      if (s == ProcessingState.completed) _playNextTrack();
+    });
+
+    _audioPlayer.playbackEventStream.listen(
+      (_) {},
+      onError: (e, st) => debugPrint('PLAYER ERROR: $e'),
+    );
+
+    _positionSubscription = _audioPlayer.positionStream.listen((position) {
       final duration = _audioPlayer.duration;
-      if (duration != null && position != Duration.zero) {
-        if (duration.inSeconds - position.inSeconds <= 10 && !_isPreloadingNext) {
-          _preloadNextTrack();
-        }
+      final current = _currentTrack;
+      if (duration == null || current == null || position == Duration.zero) return;
+      if (duration.inSeconds - position.inSeconds <= 10 &&
+          _preloadAttemptedFor != current.id) {
+        _preloadNextTrack();
       }
     });
   }
@@ -146,8 +159,9 @@ class _MainDashboardState extends State<MainDashboard> {
   @override
   void dispose() {
     _positionSubscription?.cancel();
-    _audioPlayer.dispose();
+    _stateSub?.cancel();
     _ytExplode.close();
+    _audioPlayer.dispose();
     _trackNotifier.dispose();
     _loopNotifier.dispose();
     _shuffleNotifier.dispose();
@@ -177,39 +191,44 @@ class _MainDashboardState extends State<MainDashboard> {
     );
   }
 
+  Future<String> _resolveUrl(Track track) async {
+    final manifest = await _ytExplode.videos.streamsClient
+        .getManifest(track.id)
+        .timeout(const Duration(seconds: 15));
+    final streams = manifest.muxed.where((s) => s.container.name == 'mp4');
+    if (streams.isEmpty) throw Exception('No compatible stream');
+    return streams
+        .reduce((a, b) => a.bitrate.bitsPerSecond <= b.bitrate.bitsPerSecond ? a : b)
+        .url
+        .toString();
+  }
+
   Future<void> _preloadNextTrack() async {
-    _isPreloadingNext = true;
-    
+    final current = _currentTrack;
+    if (current == null) return;
+    _preloadAttemptedFor = current.id;
+
     Track? nextTrack;
     if (_queue.isNotEmpty) {
       nextTrack = _queue.first;
     } else if (_activePlaylist != null && _playlistAnchor != null && !_isShuffling) {
       final tracks = _activePlaylist!.tracks;
-      int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
+      final currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
       if (currentIndex != -1 && currentIndex < tracks.length - 1) {
         nextTrack = tracks[currentIndex + 1];
       } else if (tracks.isNotEmpty) {
         nextTrack = tracks.first;
       }
     }
-
     if (nextTrack == null) return;
-    _preloadedNextTrack = nextTrack;
 
     try {
-      final manifest = await _ytExplode.videos.streamsClient.getManifest(nextTrack.id);
-      var mp4Streams = manifest.muxed.where((stream) => stream.container.name == 'mp4');
-      
-      if (mp4Streams.isNotEmpty) {
-        var audioStreamInfo = mp4Streams.reduce(
-          (a, b) => a.bitrate.bitsPerSecond <= b.bitrate.bitsPerSecond ? a : b,
-        );
-        _preloadedNextUrl = audioStreamInfo.url.toString();
-        
-        _showDebugNotification('PRE-WARMER: URL secured for ${nextTrack.title}!');
-      }
+      final url = await _resolveUrl(nextTrack);
+      if (_currentTrack?.id != current.id) return;   // user already moved on
+      _preloadedNextTrack = nextTrack;
+      _preloadedNextUrl = url;
     } catch (e) {
-      print("Preload failed: $e");
+      debugPrint('Preload failed: $e');
     }
   }
 
@@ -249,72 +268,81 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-  Future<void> _playTrack(Track track, {Playlist? playlist, bool showScreen = true, bool isFromQueue = false}) async {
+  Future<void> _playTrack(Track track,
+      {Playlist? playlist,
+      bool showScreen = true,
+      bool isFromQueue = false,
+      bool retried = false}) async {
+    final myId = ++_playRequestId;
+
     setState(() {
-      _trackNotifier.value = track;
-      _syncNav();
-      
+      _currentTrack = track;
       if (!isFromQueue) {
         _activePlaylist = playlist;
         _queue.clear();
         _playlistAnchor = playlist != null ? track : null;
       }
     });
-
-    _showDebugNotification('1. Preparing track...');
-    String audioUrl = '';
+    _trackNotifier.value = track;
+    _syncNav();
 
     try {
+      final String audioUrl;
       if (_preloadedNextTrack?.id == track.id && _preloadedNextUrl != null) {
         audioUrl = _preloadedNextUrl!;
-        _showDebugNotification('2. Used pre-warmed URL!');
       } else {
-        // B. Normal extraction fallback if not pre-warmed
-        _showDebugNotification('2. Extracting manifest...');
-        var manifest = await _ytExplode.videos.streamsClient.getManifest(track.id);
-        var mp4Streams = manifest.muxed.where((stream) => stream.container.name == 'mp4');
-        
-        if (mp4Streams.isEmpty) {
-          _showDebugNotification('Error: No compatible iOS stream found!');
-          return;
-        }
-        
-        var audioStreamInfo = mp4Streams.reduce(
-          (a, b) => a.bitrate.bitsPerSecond <= b.bitrate.bitsPerSecond ? a : b,
-        );
-        audioUrl = audioStreamInfo.url.toString();
+        _showDebugNotification('Extracting manifest...');
+        audioUrl = await _resolveUrl(track);
       }
+      if (myId != _playRequestId) return;            // a newer request took over
 
-      _isPreloadingNext = false;
       _preloadedNextTrack = null;
       _preloadedNextUrl = null;
 
-      _showDebugNotification('3. Loading audio...');
       await _audioPlayer.setAudioSource(
         AudioSource.uri(
           Uri.parse(audioUrl),
           headers: {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+            'User-Agent':
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
           },
           tag: MediaItem(
             id: track.id,
             title: track.title,
             artist: track.channelTitle,
-            artUri: Uri.parse(track.thumbnailUrl),
+            artUri: track.thumbnailUrl.isNotEmpty ? Uri.parse(track.thumbnailUrl) : null,
           ),
         ),
       );
-      
-      _audioPlayer.play();
-      _showDebugNotification('4. Playing natively!');
-      
-    } catch (e) {
-      _showDebugNotification('Error: $e');
-      print('CRASH DETAILS: $e');
-    }
+      if (myId != _playRequestId) return;
 
-    if (showScreen) {
-      _openFullPlayerScreen();
+      _audioPlayer.play();
+      _consecutiveFailures = 0;
+      if (showScreen) _openFullPlayerScreen();
+    } catch (e) {
+      debugPrint('Play failed for "${track.title}": $e');
+      if (myId != _playRequestId) return;
+
+      _preloadedNextTrack = null;
+      _preloadedNextUrl = null;
+
+      if (!retried) {
+        // One retry on a fresh client, in case the old one was throttled or is stuck
+        _ytExplode.close();
+        _ytExplode = YoutubeExplode();
+        return _playTrack(track,
+            playlist: playlist,
+            showScreen: showScreen,
+            isFromQueue: isFromQueue,
+            retried: true);
+      }
+
+      if (!showScreen && ++_consecutiveFailures <= 3) {
+        _showDebugNotification('Skipping "${track.title}"');
+        _playNextTrack();      // auto-advance: skip the bad track instead of dying
+      } else {
+        _showDebugNotification('Could not play "${track.title}"');
+      }
     }
   }
 
@@ -568,7 +596,7 @@ class _MainDashboardState extends State<MainDashboard> {
       },
     );
   }
-  
+
   Widget _buildBody() {
     final Widget fallbackThumbnail = Container(
       width: 50,
