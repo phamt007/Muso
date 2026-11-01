@@ -98,9 +98,19 @@ class _MainDashboardState extends State<MainDashboard> {
   Track? _playlistAnchor;
   final List<Track> _queue = [];
 
-  bool _isLooping = false;
-  bool _isShuffling = false;
-  double _globalVolume = 1.0; 
+  final ValueNotifier<Track?> _trackNotifier = ValueNotifier(null);
+  final ValueNotifier<bool> _loopNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> _shuffleNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> _hasPlaylistNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> _canSkipNextNotifier = ValueNotifier(false);
+  final ValueNotifier<double> _volumeNotifier = ValueNotifier(1.0);
+
+  bool get _isShuffling => _shuffleNotifier.value;
+
+  void _syncNav() {
+    _hasPlaylistNotifier.value = _activePlaylist != null;
+    _canSkipNextNotifier.value = _activePlaylist != null || _queue.isNotEmpty;
+  }
 
   @override
   void initState() {
@@ -138,6 +148,12 @@ class _MainDashboardState extends State<MainDashboard> {
     _positionSubscription?.cancel();
     _audioPlayer.dispose();
     _ytExplode.close();
+    _trackNotifier.dispose();
+    _loopNotifier.dispose();
+    _shuffleNotifier.dispose();
+    _hasPlaylistNotifier.dispose();
+    _canSkipNextNotifier.dispose();
+    _volumeNotifier.dispose();
     super.dispose();
   }
 
@@ -235,7 +251,8 @@ class _MainDashboardState extends State<MainDashboard> {
 
   Future<void> _playTrack(Track track, {Playlist? playlist, bool showScreen = true, bool isFromQueue = false}) async {
     setState(() {
-      _currentTrack = track;
+      _trackNotifier.value = track;
+      _syncNav();
       
       if (!isFromQueue) {
         _activePlaylist = playlist;
@@ -369,6 +386,7 @@ class _MainDashboardState extends State<MainDashboard> {
                 onTap: () {
                   Navigator.pop(bottomSheetContext);
                   setState(() => _queue.add(track));
+                  _syncNav();
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to Queue to play next')));
                 },
               ),
@@ -523,30 +541,34 @@ class _MainDashboardState extends State<MainDashboard> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (bottomSheetContext) {
         return FullPlayerModalContent(
-          player: _audioPlayer, 
-          track: _currentTrack!,
+          player: _audioPlayer,
           activeTheme: widget.activeTheme,
-          hasPlaylist: _activePlaylist != null,
-          isLooping: _isLooping,
-          isShuffling: _isShuffling,
-          currentVolume: _globalVolume,
+          trackListenable: _trackNotifier,
+          hasPlaylistListenable: _hasPlaylistNotifier,
+          canSkipNextListenable: _canSkipNextNotifier,
+          loopListenable: _loopNotifier,
+          shuffleListenable: _shuffleNotifier,
+          volumeListenable: _volumeNotifier,
           onVolumeChanged: (val) {
-             setState(() => _globalVolume = val);
-             _audioPlayer.setVolume(val); 
+            _volumeNotifier.value = val;
+            _audioPlayer.setVolume(val);
           },
           onToggleLoop: (val) {
-            setState(() => _isLooping = val);
+            _loopNotifier.value = val;
             _audioPlayer.setLoopMode(val ? LoopMode.one : LoopMode.off);
           },
-          onToggleShuffle: (val) => setState(() => _isShuffling = val),
-          onSkipNext: _activePlaylist != null || _queue.isNotEmpty ? _playNextTrack : null,
-          onSkipPrevious: _activePlaylist != null ? _playPreviousTrack : null,
-          onOptionsTap: () => _showTrackMenu(_currentTrack!),
+          onToggleShuffle: (val) => _shuffleNotifier.value = val,
+          onSkipNext: _playNextTrack,
+          onSkipPrevious: _playPreviousTrack,
+          onOptionsTap: () {
+            final t = _trackNotifier.value;
+            if (t != null) _showTrackMenu(t);
+          },
         );
       },
     );
   }
-
+  
   Widget _buildBody() {
     final Widget fallbackThumbnail = Container(
       width: 50,
