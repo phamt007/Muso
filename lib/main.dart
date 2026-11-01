@@ -418,6 +418,20 @@ class _MainDashboardState extends State<MainDashboard> {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to Queue to play next')));
                 },
               ),
+
+              if (_myPlaylists.contains(track)) ...[
+                ListTile(
+                  leading: Icon(Icons.delete, color: widget.activeTheme.primaryAccent),
+                  title: Text('Delete Track from Playlist', style: TextStyle(color: widget.activeTheme.primaryAccent, fontWeight: FontWeight.bold)),
+                  onTap: () {
+                    Navigator.pop(bottomSheetContext);
+                    setState(() => _myPlaylists.remove(track));
+                    _storage.savePlaylists(_myPlaylists);
+                    _syncNav();
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Track deleted from playlist')));
+                  },
+                ),
+              ],
               const Divider(color: Colors.grey),
               ListTile(
                 leading: Icon(Icons.add_box, color: widget.activeTheme.textPrimary),
@@ -686,14 +700,6 @@ class _MainDashboardState extends State<MainDashboard> {
                         _selectedForReorder.clear();
                         _isEditingOrder = true;
                       }),
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.play_arrow_rounded, color: widget.activeTheme.primaryAccent, size: 28),
-                      onPressed: () {
-                        if (_selectedPlaylistDetail!.tracks.isNotEmpty) {
-                          _playTrack(_selectedPlaylistDetail!.tracks.first, playlist: _selectedPlaylistDetail);
-                        }
-                      },
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
