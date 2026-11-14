@@ -1,8 +1,7 @@
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
+import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist; 
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
@@ -18,17 +17,16 @@ import 'playlist_model.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  
   await JustAudioBackground.init(
     androidNotificationChannelId: 'com.tap007.rhythic.channel.audio',
     androidNotificationChannelName: 'Audio playback',
     androidNotificationOngoing: true,
   );
-
+  
   await dotenv.load(fileName: ".env");
   runApp(const MusicApp());
 }
-
 class MusicApp extends StatefulWidget {
   const MusicApp({super.key});
 
@@ -74,18 +72,14 @@ class MainDashboard extends StatefulWidget {
 class _MainDashboardState extends State<MainDashboard> {
   final YouTubeService _apiService = YouTubeService();
   final TextEditingController _searchController = TextEditingController();
-
+  
   final AudioPlayer _audioPlayer = AudioPlayer();
-
+  
   YoutubeExplode _ytExplode = YoutubeExplode();
   int _playRequestId = 0;
   int _consecutiveFailures = 0;
   String? _preloadAttemptedFor;
   StreamSubscription? _stateSub;
-  ConcatenatingAudioSource? _concat;
-  Track? _appendedNext;
-  Track? _shuffleNext;
-  StreamSubscription? _indexSub;
 
   final StorageService _storage = StorageService();
 
@@ -100,6 +94,7 @@ class _MainDashboardState extends State<MainDashboard> {
   bool _isEditingOrder = false;
   final List<Track> _selectedForReorder = [];
 
+  bool _isPreloadingNext = false;
   Track? _preloadedNextTrack;
   String? _preloadedNextUrl;
 
@@ -149,32 +144,10 @@ class _MainDashboardState extends State<MainDashboard> {
       final duration = _audioPlayer.duration;
       final current = _currentTrack;
       if (duration == null || current == null || position == Duration.zero) return;
-      if (duration.inSeconds - position.inSeconds <= 30 &&
+      if (duration.inSeconds - position.inSeconds <= 10 &&
           _preloadAttemptedFor != current.id) {
         _preloadNextTrack();
       }
-    });
-
-    _indexSub = _audioPlayer.currentIndexStream.listen((index) {
-      final next = _appendedNext;
-      if (index == null || index == 0 || next == null) return;
-      _appendedNext = null;
-      _shuffleNext = null;
-      _preloadedNextTrack = null;
-      _preloadedNextUrl = null;
-
-      setState(() {
-        _currentTrack = next;
-        if (_queue.isNotEmpty && _queue.first.id == next.id) {
-          _queue.removeAt(0);
-        } else if (_activePlaylist != null) {
-          _playlistAnchor = next;
-        }
-      });
-      _trackNotifier.value = next;
-      _syncNav();
-
-      _concat?.removeRange(0, index);
     });
   }
 
@@ -187,7 +160,6 @@ class _MainDashboardState extends State<MainDashboard> {
   void dispose() {
     _positionSubscription?.cancel();
     _stateSub?.cancel();
-    _indexSub?.cancel();
     _ytExplode.close();
     _audioPlayer.dispose();
     _trackNotifier.dispose();
@@ -214,7 +186,7 @@ class _MainDashboardState extends State<MainDashboard> {
         backgroundColor: Colors.orange.shade800,
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16), 
       ),
     );
   }
@@ -231,94 +203,55 @@ class _MainDashboardState extends State<MainDashboard> {
         .toString();
   }
 
-  AudioSource _buildSource(Track track, String url) {
-    return AudioSource.uri(
-      Uri.parse(url),
-      headers: {
-        'User-Agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-      },
-      tag: MediaItem(
-        id: track.id,
-        title: track.title,
-        artist: track.channelTitle,
-        artUri: track.thumbnailUrl.isNotEmpty ? Uri.parse(track.thumbnailUrl) : null,
-      ),
-    );
-  }
-
-  Track? _computeNextTrack() {
-    if (_queue.isNotEmpty) return _queue.first;
-    if (_activePlaylist == null || _playlistAnchor == null) return null;
-    final tracks = _activePlaylist!.tracks;
-    if (tracks.isEmpty) return null;
-
-    if (_isShuffling) {
-      if (_shuffleNext == null) {
-        final pool = tracks.length > 1
-            ? tracks.where((t) => t.id != _playlistAnchor!.id).toList()
-            : tracks;
-        _shuffleNext = pool[Random().nextInt(pool.length)];
-      }
-      return _shuffleNext;
-    }
-
-    final i = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
-    if (i != -1 && i < tracks.length - 1) return tracks[i + 1];
-    return tracks.first;
-  }
-
-  void _invalidateAppended() {
-    final concat = _concat;
-    if (concat != null && _appendedNext != null && concat.length > 1) {
-      concat.removeAt(1);
-    }
-    _appendedNext = null;
-    _preloadedNextTrack = null;
-    _preloadedNextUrl = null;
-    _preloadAttemptedFor = null;
-  }
-
-  void _toggleShuffle(bool value) {
-    _shuffleNotifier.value = value;
-    _shuffleNext = null;
-    _invalidateAppended();
-  }
-
   Future<void> _preloadNextTrack() async {
     final current = _currentTrack;
-    final concat = _concat;
-    if (current == null || concat == null) return;
+    if (current == null) return;
     _preloadAttemptedFor = current.id;
 
-    final nextTrack = _computeNextTrack();
+    Track? nextTrack;
+    if (_queue.isNotEmpty) {
+      nextTrack = _queue.first;
+    } else if (_activePlaylist != null && _playlistAnchor != null && !_isShuffling) {
+      final tracks = _activePlaylist!.tracks;
+      final currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
+      if (currentIndex != -1 && currentIndex < tracks.length - 1) {
+        nextTrack = tracks[currentIndex + 1];
+      } else if (tracks.isNotEmpty) {
+        nextTrack = tracks.first;
+      }
+    }
     if (nextTrack == null) return;
 
     try {
       final url = await _resolveUrl(nextTrack);
-      if (_currentTrack?.id != current.id ||
-          _concat != concat ||
-          _appendedNext != null) {
-        return;
-      }
-      if (_computeNextTrack()?.id != nextTrack.id) return;
+      if (_currentTrack?.id != current.id) return;   // user already moved on
       _preloadedNextTrack = nextTrack;
       _preloadedNextUrl = url;
-      _appendedNext = nextTrack;
-      await concat.add(_buildSource(nextTrack, url));
     } catch (e) {
       debugPrint('Preload failed: $e');
     }
   }
 
   void _playNextTrack() {
-    final next = _computeNextTrack();
-    if (next == null) return;
-    if (_queue.isNotEmpty && _queue.first.id == next.id) {
-      _queue.removeAt(0);
-      _playTrack(next, showScreen: false, isFromQueue: true);
+    if (_queue.isNotEmpty) {
+      _playTrack(_queue.removeAt(0), showScreen: false, isFromQueue: true);
+      return;
+    }
+    
+    if (_activePlaylist == null || _playlistAnchor == null) return;
+    final tracks = _activePlaylist!.tracks;
+    if (tracks.isEmpty) return;
+
+    if (_isShuffling) {
+      final random = Random();
+      _playTrack(tracks[random.nextInt(tracks.length)], playlist: _activePlaylist, showScreen: false);
     } else {
-      _playTrack(next, playlist: _activePlaylist, showScreen: false);
+      int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
+      if (currentIndex != -1 && currentIndex < tracks.length - 1) {
+        _playTrack(tracks[currentIndex + 1], playlist: _activePlaylist, showScreen: false);
+      } else {
+        _playTrack(tracks.first, playlist: _activePlaylist, showScreen: false);
+      }
     }
   }
 
@@ -341,8 +274,6 @@ class _MainDashboardState extends State<MainDashboard> {
       bool isFromQueue = false,
       bool retried = false}) async {
     final myId = ++_playRequestId;
-    _shuffleNext = null;
-    _appendedNext = null;
 
     setState(() {
       _currentTrack = track;
@@ -363,14 +294,26 @@ class _MainDashboardState extends State<MainDashboard> {
         _showDebugNotification('Extracting manifest...');
         audioUrl = await _resolveUrl(track);
       }
-      if (myId != _playRequestId) return;
+      if (myId != _playRequestId) return;            // a newer request took over
 
       _preloadedNextTrack = null;
       _preloadedNextUrl = null;
 
-      final concat = ConcatenatingAudioSource(children: [_buildSource(track, audioUrl)]);
-      _concat = concat;
-      await _audioPlayer.setAudioSource(concat);
+      await _audioPlayer.setAudioSource(
+        AudioSource.uri(
+          Uri.parse(audioUrl),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+          },
+          tag: MediaItem(
+            id: track.id,
+            title: track.title,
+            artist: track.channelTitle,
+            artUri: track.thumbnailUrl.isNotEmpty ? Uri.parse(track.thumbnailUrl) : null,
+          ),
+        ),
+      );
       if (myId != _playRequestId) return;
 
       _audioPlayer.play();
@@ -384,6 +327,7 @@ class _MainDashboardState extends State<MainDashboard> {
       _preloadedNextUrl = null;
 
       if (!retried) {
+        // One retry on a fresh client, in case the old one was throttled or is stuck
         _ytExplode.close();
         _ytExplode = YoutubeExplode();
         return _playTrack(track,
@@ -395,7 +339,7 @@ class _MainDashboardState extends State<MainDashboard> {
 
       if (!showScreen && ++_consecutiveFailures <= 3) {
         _showDebugNotification('Skipping "${track.title}"');
-        _playNextTrack();
+        _playNextTrack();      // auto-advance: skip the bad track instead of dying
       } else {
         _showDebugNotification('Could not play "${track.title}"');
       }
@@ -419,6 +363,7 @@ class _MainDashboardState extends State<MainDashboard> {
         SnackBar(content: Text('Added to ${newPlaylist.name}')),
       );
     }
+    
   }
 
   void _addTrackToPlaylist(Track track, Playlist playlist) {
@@ -427,7 +372,7 @@ class _MainDashboardState extends State<MainDashboard> {
     });
 
     _storage.savePlaylists(_myPlaylists);
-
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Added to ${playlist.name}')),
     );
@@ -469,7 +414,6 @@ class _MainDashboardState extends State<MainDashboard> {
                 onTap: () {
                   Navigator.pop(bottomSheetContext);
                   setState(() => _queue.add(track));
-                  _invalidateAppended();
                   _syncNav();
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to Queue to play next')));
                 },
@@ -655,7 +599,7 @@ class _MainDashboardState extends State<MainDashboard> {
             _loopNotifier.value = val;
             _audioPlayer.setLoopMode(val ? LoopMode.one : LoopMode.off);
           },
-          onToggleShuffle: _toggleShuffle,
+          onToggleShuffle: (val) => _shuffleNotifier.value = val,
           onSkipNext: _playNextTrack,
           onSkipPrevious: _playPreviousTrack,
           onOptionsTap: () {
@@ -740,7 +684,6 @@ class _MainDashboardState extends State<MainDashboard> {
                             _selectedPlaylistDetail!.tracks.addAll(_selectedForReorder);
                             _selectedPlaylistDetail!.tracks.addAll(unselected);
                             _storage.savePlaylists(_myPlaylists);
-                            _invalidateAppended();
                           });
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playlist order updated!')));
                         }
@@ -968,7 +911,7 @@ class _MainDashboardState extends State<MainDashboard> {
           Expanded(child: _buildBody()),
           if (_currentTrack != null)
             MiniPlayer(
-              player: _audioPlayer,
+              player: _audioPlayer, 
               track: _currentTrack!,
               activeTheme: widget.activeTheme,
               onTap: _openFullPlayerScreen,
