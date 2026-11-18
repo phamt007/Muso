@@ -63,16 +63,6 @@ jobs:
           flutter build ipa --release \
             --export-options-plist=ios/ExportOptions.plist
 
-      - name: List apps visible to key
-        run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$APPSTORE_API_PRIVATE_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${APPSTORE_API_KEY_ID}.p8
-          xcrun altool --list-apps --apiKey "$APPSTORE_API_KEY_ID" --apiIssuer "$APPSTORE_ISSUER_ID"
-        env:
-          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
-          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
-          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
-
       - name: Upload to App Store Connect / TestFlight
         env:
           APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
