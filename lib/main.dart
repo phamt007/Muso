@@ -15,6 +15,7 @@ import 'widgets/full_player.dart';
 import 'youtube_service.dart';
 import 'track_model.dart';
 import 'playlist_model.dart';
+import 'widgets/infinite_list.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -102,6 +103,7 @@ class _MainDashboardState extends State<MainDashboard> {
 
   Track? _preloadedNextTrack;
   String? _preloadedNextUrl;
+  DateTime? _lastPrevTap;
 
   Track? _currentTrack;
   Playlist? _activePlaylist;
@@ -322,17 +324,30 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-  void _playPreviousTrack() {
-    if (_activePlaylist == null || _playlistAnchor == null) return;
+  Track? _computePreviousTrack() {
+    if (_activePlaylist == null || _playlistAnchor == null) return null;
     final tracks = _activePlaylist!.tracks;
-    if (tracks.isEmpty) return;
+    final i = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
+    return i > 0 ? tracks[i - 1] : null;
+  }
 
-    int currentIndex = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
-    if (currentIndex > 0) {
-      _playTrack(tracks[currentIndex - 1], playlist: _activePlaylist, showScreen: false);
-    } else {
-      _playTrack(tracks.last, playlist: _activePlaylist, showScreen: false);
+  void _playPreviousTrack() {
+    final now = DateTime.now();
+    final last = _lastPrevTap;
+    _lastPrevTap = now;
+
+    final tappedTwice =
+        last != null && now.difference(last) < const Duration(seconds: 1);
+    final nearStart = _audioPlayer.position < const Duration(seconds: 1);
+    final prev = _computePreviousTrack();
+
+    if ((tappedTwice || nearStart) && prev != null) {
+      _lastPrevTap = null;
+      _playTrack(prev, playlist: _activePlaylist, showScreen: false);
+      return;
     }
+
+    _audioPlayer.seek(Duration.zero);
   }
 
   Future<void> _playTrack(Track track,
@@ -677,7 +692,7 @@ class _MainDashboardState extends State<MainDashboard> {
 
     switch (_currentView) {
       case 'playlists':
-        return ListView.builder(
+        return InfiniteList(
           itemCount: _myPlaylists.length,
           itemBuilder: (context, index) {
             final playlist = _myPlaylists[index];
@@ -697,6 +712,46 @@ class _MainDashboardState extends State<MainDashboard> {
 
       case 'playlist_detail':
         if (_selectedPlaylistDetail == null) return const Center(child: Text('No playlist selected'));
+
+        Widget buildTrackTile(BuildContext context, int index) {
+          final track = _selectedPlaylistDetail!.tracks[index];
+          final isSelected = _selectedForReorder.contains(track);
+          final selectIndex = _selectedForReorder.indexOf(track) + 1;
+
+          return ListTile(
+            leading: track.thumbnailUrl.isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
+                  )
+                : fallbackThumbnail,
+            title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(track.channelTitle),
+            trailing: _isEditingOrder
+                ? (isSelected
+                    ? CircleAvatar(
+                        radius: 14,
+                        backgroundColor: widget.activeTheme.primaryAccent,
+                        child: Text('$selectIndex', style: TextStyle(color: widget.activeTheme.surface, fontWeight: FontWeight.bold, fontSize: 12)),
+                      )
+                    : const Icon(Icons.circle_outlined, color: Colors.grey))
+                : IconButton(icon: const Icon(Icons.more_vert), onPressed: () => _showTrackMenu(track)),
+            onTap: () {
+              if (_isEditingOrder) {
+                setState(() {
+                  if (isSelected) {
+                    _selectedForReorder.remove(track);
+                  } else {
+                    _selectedForReorder.add(track);
+                  }
+                });
+              } else {
+                _playTrack(track, playlist: _selectedPlaylistDetail);
+              }
+            },
+          );
+        }
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -769,47 +824,15 @@ class _MainDashboardState extends State<MainDashboard> {
             Expanded(
               child: _selectedPlaylistDetail!.tracks.isEmpty
                   ? const Center(child: Text('This playlist is empty.', style: TextStyle(color: Colors.grey)))
-                  : ListView.builder(
-                      itemCount: _selectedPlaylistDetail!.tracks.length,
-                      itemBuilder: (context, index) {
-                        final track = _selectedPlaylistDetail!.tracks[index];
-                        final isSelected = _selectedForReorder.contains(track);
-                        final selectIndex = _selectedForReorder.indexOf(track) + 1;
-
-                        return ListTile(
-                          leading: track.thumbnailUrl.isNotEmpty
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
-                                )
-                              : fallbackThumbnail,
-                          title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                          subtitle: Text(track.channelTitle),
-                          trailing: _isEditingOrder
-                              ? (isSelected
-                                  ? CircleAvatar(
-                                      radius: 14,
-                                      backgroundColor: widget.activeTheme.primaryAccent,
-                                      child: Text('$selectIndex', style: TextStyle(color: widget.activeTheme.surface, fontWeight: FontWeight.bold, fontSize: 12)),
-                                    )
-                                  : const Icon(Icons.circle_outlined, color: Colors.grey))
-                              : IconButton(icon: const Icon(Icons.more_vert), onPressed: () => _showTrackMenu(track)),
-                          onTap: () {
-                            if (_isEditingOrder) {
-                              setState(() {
-                                if (isSelected) {
-                                  _selectedForReorder.remove(track);
-                                } else {
-                                  _selectedForReorder.add(track);
-                                }
-                              });
-                            } else {
-                              _playTrack(track, playlist: _selectedPlaylistDetail);
-                            }
-                          },
-                        );
-                      },
-                    ),
+                  : _isEditingOrder
+                      ? ListView.builder(
+                          itemCount: _selectedPlaylistDetail!.tracks.length,
+                          itemBuilder: buildTrackTile,
+                        )
+                      : InfiniteList(
+                          itemCount: _selectedPlaylistDetail!.tracks.length,
+                          itemBuilder: buildTrackTile,
+                        ),
             ),
           ],
         );

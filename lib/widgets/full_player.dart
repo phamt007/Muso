@@ -123,14 +123,11 @@ class FullPlayerModalContent extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  ValueListenableBuilder<bool>(
-                    valueListenable: hasPlaylistListenable,
-                    builder: (context, hasPlaylist, _) => IconButton(
-                      iconSize: 32,
-                      icon: const Icon(Icons.skip_previous),
-                      color: hasPlaylist ? Colors.white : Colors.grey.withOpacity(0.3),
-                      onPressed: hasPlaylist ? onSkipPrevious : null,
-                    ),
+                  IconButton(
+                    iconSize: 32,
+                    icon: const Icon(Icons.skip_previous),
+                    color: Colors.white,
+                    onPressed: onSkipPrevious,
                   ),
                   StreamBuilder<PlayerState>(
                     stream: player.playerStateStream,
