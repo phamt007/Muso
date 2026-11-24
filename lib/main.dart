@@ -6,6 +6,7 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart' hide Playlist;
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'storage_service.dart';
 import 'dart:async';
 
@@ -93,7 +94,8 @@ class _MainDashboardState extends State<MainDashboard> {
   StreamSubscription? _positionSubscription;
 
   List<Track> _searchResults = [];
-  String _currentView = 'search';
+  int _tabIndex = 1;
+  String _version = '';
 
   Playlist? _selectedPlaylistDetail;
   final List<Playlist> _myPlaylists = [];
@@ -129,6 +131,10 @@ class _MainDashboardState extends State<MainDashboard> {
   void initState() {
     super.initState();
     _initAudioSession();
+
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _version = '${info.version} (${info.buildNumber})');
+    });
 
     _storage.loadPlaylists().then((savedData) {
       if (mounted) {
@@ -473,7 +479,7 @@ class _MainDashboardState extends State<MainDashboard> {
       final results = await _apiService.searchMusic(query);
       setState(() {
         _searchResults = results;
-        _currentView = 'search';
+        _tabIndex = 1;
       });
       _showDebugNotification('Found ${results.length} results!');
     } catch (e) {
@@ -547,7 +553,7 @@ class _MainDashboardState extends State<MainDashboard> {
                             enabled: !isAlreadyAdded,
                             leading: Icon(
                               Icons.playlist_add,
-                              color: isAlreadyAdded ? widget.activeTheme.textSecondary.withOpacity(0.5) : widget.activeTheme.textPrimary,
+                              color: isAlreadyAdded ? widget.activeTheme.textSecondary.withValues(alpha: 0.5) : widget.activeTheme.textPrimary,
                             ),
                             title: Text(
                               playlist.name,
@@ -635,9 +641,9 @@ class _MainDashboardState extends State<MainDashboard> {
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.redAccent.withOpacity(0.2),
+                      color: Colors.redAccent.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+                      border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5)),
                     ),
                     child: TextButton(
                       onPressed: () {
@@ -645,9 +651,15 @@ class _MainDashboardState extends State<MainDashboard> {
                         setState(() {
                           _selectedForReorder.clear();
                           _isEditingOrder = false;
+                          if (identical(_activePlaylist, _selectedPlaylistDetail)) {
+                            _activePlaylist = null;
+                            _playlistAnchor = null;
+                            _invalidateAppended();
+                            _syncNav();
+                          }
                           _myPlaylists.remove(_selectedPlaylistDetail);
                           _storage.savePlaylists(_myPlaylists);
-                          _currentView = 'playlists';
+                          _selectedPlaylistDetail = null;
                         });
                       },
                       child: const Text('Confirm', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
@@ -700,219 +712,403 @@ class _MainDashboardState extends State<MainDashboard> {
     );
   }
 
-  Widget _buildBody() {
-    final Widget fallbackThumbnail = Container(
+  Widget _thumb(Track track) {
+    final fallback = Container(
       width: 50,
       height: 50,
-      decoration: BoxDecoration(color: widget.activeTheme.primaryAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(
+        color: widget.activeTheme.primaryAccent.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Icon(Icons.music_note, color: widget.activeTheme.primaryAccent),
     );
+    if (track.thumbnailUrl.isEmpty) return fallback;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(
+        track.thumbnailUrl,
+        width: 50,
+        height: 50,
+        fit: BoxFit.cover,
+        errorBuilder: (c, e, s) => fallback,
+      ),
+    );
+  }
 
-    switch (_currentView) {
-      case 'playlists':
-        return InfiniteList(
-          itemCount: _myPlaylists.length,
-          itemBuilder: (context, index) {
-            final playlist = _myPlaylists[index];
-            return ListTile(
-              leading: Icon(Icons.playlist_play, color: widget.activeTheme.primaryAccent, size: 40),
-              title: Text(playlist.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text('${playlist.tracks.length} songs', style: TextStyle(color: widget.activeTheme.textSecondary)),
-              onTap: () {
-                setState(() {
-                  _selectedPlaylistDetail = playlist;
-                  _currentView = 'playlist_detail';
-                });
-              },
-            );
-          },
-        );
+  Widget _styledTile({
+    Widget? leading,
+    required Widget title,
+    Widget? subtitle,
+    Widget? trailing,
+    VoidCallback? onTap,
+    bool highlighted = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+      child: ListTile(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        tileColor: highlighted
+            ? widget.activeTheme.primaryAccent.withValues(alpha: 0.12)
+            : Colors.white.withValues(alpha: 0.025),
+        leading: leading,
+        title: title,
+        subtitle: subtitle,
+        trailing: trailing,
+        onTap: onTap,
+      ),
+    );
+  }
 
-      case 'playlist_detail':
-        if (_selectedPlaylistDetail == null) return const Center(child: Text('No playlist selected'));
+  Widget _trackTile(Track track, {Widget? trailing, VoidCallback? onTap, bool highlighted = false}) {
+    return _styledTile(
+      leading: _thumb(track),
+      title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(track.channelTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: trailing,
+      onTap: onTap,
+      highlighted: highlighted,
+    );
+  }
 
-        Widget buildTrackTile(BuildContext context, int index) {
-          final track = _selectedPlaylistDetail!.tracks[index];
-          final isSelected = _selectedForReorder.contains(track);
-          final selectIndex = _selectedForReorder.indexOf(track) + 1;
+  Widget _sectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+      child: Text(
+        text.toUpperCase(),
+        style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 12, letterSpacing: 1),
+      ),
+    );
+  }
 
-          return ListTile(
-            leading: track.thumbnailUrl.isNotEmpty
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
-                  )
-                : fallbackThumbnail,
-            title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(track.channelTitle),
-            trailing: _isEditingOrder
-                ? (isSelected
-                    ? CircleAvatar(
-                        radius: 14,
-                        backgroundColor: widget.activeTheme.primaryAccent,
-                        child: Text('$selectIndex', style: TextStyle(color: widget.activeTheme.surface, fontWeight: FontWeight.bold, fontSize: 12)),
-                      )
-                    : const Icon(Icons.circle_outlined, color: Colors.grey))
-                : IconButton(icon: const Icon(Icons.more_vert), onPressed: () => _showTrackMenu(track, fromPlaylist: _selectedPlaylistDetail)),
-            onTap: () {
-              if (_isEditingOrder) {
-                setState(() {
-                  if (isSelected) {
-                    _selectedForReorder.remove(track);
-                  } else {
-                    _selectedForReorder.add(track);
-                  }
-                });
-              } else {
-                _playTrack(track, playlist: _selectedPlaylistDetail);
-              }
-            },
-          );
-        }
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () {
-                      setState(() {
-                        _isEditingOrder = false;
-                        _selectedForReorder.clear();
-                        _currentView = 'playlists';
-                      });
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _isEditingOrder ? 'Select Order' : _selectedPlaylistDetail!.name,
-                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (_isEditingOrder) ...[
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.grey, size: 26),
-                      onPressed: () => setState(() {
-                        _selectedForReorder.clear();
-                        _isEditingOrder = false;
-                      }),
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.check, color: widget.activeTheme.primaryAccent, size: 28),
-                      onPressed: () {
-                        if (_selectedForReorder.isNotEmpty) {
-                          setState(() {
-                            final unselected = _selectedPlaylistDetail!.tracks.where((t) => !_selectedForReorder.contains(t)).toList();
-                            _selectedPlaylistDetail!.tracks.clear();
-                            _selectedPlaylistDetail!.tracks.addAll(_selectedForReorder);
-                            _selectedPlaylistDetail!.tracks.addAll(unselected);
-                            _storage.savePlaylists(_myPlaylists);
-                            _invalidateAppended();
-                          });
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playlist order updated!')));
-                        }
-                        setState(() {
-                          _selectedForReorder.clear();
-                          _isEditingOrder = false;
-                        });
-                      },
-                    ),
-                  ] else ...[
-                    IconButton(
-                      icon: Icon(Icons.edit, color: widget.activeTheme.primaryAccent, size: 26),
-                      onPressed: () => setState(() {
-                        _selectedForReorder.clear();
-                        _isEditingOrder = true;
-                      }),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                      onPressed: () => _showDeletePlaylistDialog(context),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Expanded(
-              child: _selectedPlaylistDetail!.tracks.isEmpty
-                  ? const Center(child: Text('This playlist is empty.', style: TextStyle(color: Colors.grey)))
-                  : _isEditingOrder
-                      ? ListView.builder(
-                          itemCount: _selectedPlaylistDetail!.tracks.length,
-                          itemBuilder: buildTrackTile,
-                        )
-                      : InfiniteList(
-                          itemCount: _selectedPlaylistDetail!.tracks.length,
-                          itemBuilder: buildTrackTile,
-                        ),
-            ),
-          ],
-        );
-      case 'search':
+  Widget _buildBody() {
+    switch (_tabIndex) {
+      case 0:
+        return _selectedPlaylistDetail == null ? _buildPlaylistsTab() : _buildPlaylistDetail();
+      case 2:
+        return _buildQueueTab();
+      case 1:
       default:
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(12.0),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search songs, artists, albums...',
-                  prefixIcon: const Icon(Icons.search),
-                  filled: true,
-                  fillColor: widget.activeTheme.searchBar,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
-                ),
-                onSubmitted: _executeSearch,
-              ),
-            ),
-            Expanded(
-              child: _searchResults.isEmpty
-                  ? Center(child: Icon(Icons.search, size: 80, color: widget.activeTheme.primaryAccent.withOpacity(0.5)))
-                  : ListView.builder(
-                      itemCount: _searchResults.length,
-                      itemBuilder: (context, index) {
-                        final track = _searchResults[index];
-                        return ListTile(
-                          leading: track.thumbnailUrl.isNotEmpty
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.network(track.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover, errorBuilder: (c, e, s) => fallbackThumbnail),
-                                )
-                              : fallbackThumbnail,
-                          title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                          subtitle: Text(track.channelTitle),
-                          trailing: IconButton(
-                            icon: Icon(Icons.more_vert, color: widget.activeTheme.primaryAccent),
-                            onPressed: () => _showTrackMenu(track),
-                          ),
-                          onTap: () => _playTrack(track, playlist: null),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        );
+        return _buildSearchTab();
     }
+  }
+
+  Widget _buildPlaylistsTab() {
+    if (_myPlaylists.isEmpty) {
+      return const Center(
+        child: Text(
+          'No playlists yet.\nTap + to create one.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey),
+        ),
+      );
+    }
+    return InfiniteList(
+      itemCount: _myPlaylists.length,
+      itemBuilder: (context, index) {
+        final playlist = _myPlaylists[index];
+        return _styledTile(
+          leading: Icon(Icons.playlist_play, color: widget.activeTheme.primaryAccent, size: 40),
+          title: Text(playlist.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: Text('${playlist.tracks.length} songs', style: TextStyle(color: widget.activeTheme.textSecondary)),
+          onTap: () => setState(() => _selectedPlaylistDetail = playlist),
+        );
+      },
+    );
+  }
+
+  Widget _buildPlaylistDetail() {
+    final playlist = _selectedPlaylistDetail!;
+
+    Widget buildTrackTile(BuildContext context, int index) {
+      final track = playlist.tracks[index];
+      final isSelected = _selectedForReorder.contains(track);
+      final selectIndex = _selectedForReorder.indexOf(track) + 1;
+
+      return _trackTile(
+        track,
+        highlighted: _isEditingOrder && isSelected,
+        trailing: _isEditingOrder
+            ? (isSelected
+                ? CircleAvatar(
+                    radius: 14,
+                    backgroundColor: widget.activeTheme.primaryAccent,
+                    child: Text('$selectIndex', style: TextStyle(color: widget.activeTheme.surface, fontWeight: FontWeight.bold, fontSize: 12)),
+                  )
+                : const Icon(Icons.circle_outlined, color: Colors.grey))
+            : IconButton(
+                icon: const Icon(Icons.more_vert),
+                onPressed: () => _showTrackMenu(track, fromPlaylist: playlist),
+              ),
+        onTap: () {
+          if (_isEditingOrder) {
+            setState(() {
+              if (isSelected) {
+                _selectedForReorder.remove(track);
+              } else {
+                _selectedForReorder.add(track);
+              }
+            });
+          } else {
+            _playTrack(track, playlist: playlist);
+          }
+        },
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () {
+                  setState(() {
+                    _isEditingOrder = false;
+                    _selectedForReorder.clear();
+                    _selectedPlaylistDetail = null;
+                  });
+                },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _isEditingOrder ? 'Select Order' : playlist.name,
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (_isEditingOrder) ...[
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.grey, size: 26),
+                  onPressed: () => setState(() {
+                    _selectedForReorder.clear();
+                    _isEditingOrder = false;
+                  }),
+                ),
+                IconButton(
+                  icon: Icon(Icons.check, color: widget.activeTheme.primaryAccent, size: 28),
+                  onPressed: () {
+                    if (_selectedForReorder.isNotEmpty) {
+                      setState(() {
+                        final unselected = playlist.tracks.where((t) => !_selectedForReorder.contains(t)).toList();
+                        playlist.tracks.clear();
+                        playlist.tracks.addAll(_selectedForReorder);
+                        playlist.tracks.addAll(unselected);
+                        _storage.savePlaylists(_myPlaylists);
+                        _invalidateAppended();
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playlist order updated!')));
+                    }
+                    setState(() {
+                      _selectedForReorder.clear();
+                      _isEditingOrder = false;
+                    });
+                  },
+                ),
+              ] else ...[
+                IconButton(
+                  icon: Icon(Icons.edit, color: widget.activeTheme.primaryAccent, size: 26),
+                  onPressed: () => setState(() {
+                    _selectedForReorder.clear();
+                    _isEditingOrder = true;
+                  }),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  onPressed: () => _showDeletePlaylistDialog(context),
+                ),
+              ],
+            ],
+          ),
+        ),
+        Expanded(
+          child: playlist.tracks.isEmpty
+              ? const Center(child: Text('This playlist is empty.', style: TextStyle(color: Colors.grey)))
+              : _isEditingOrder
+                  ? ListView.builder(
+                      itemCount: playlist.tracks.length,
+                      itemBuilder: buildTrackTile,
+                    )
+                  : InfiniteList(
+                      itemCount: playlist.tracks.length,
+                      itemBuilder: buildTrackTile,
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchTab() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: 'Search songs, artists, albums...',
+              prefixIcon: const Icon(Icons.search),
+              filled: true,
+              fillColor: widget.activeTheme.searchBar,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
+            ),
+            onSubmitted: _executeSearch,
+          ),
+        ),
+        Expanded(
+          child: _searchResults.isEmpty
+              ? Center(child: Icon(Icons.search, size: 80, color: widget.activeTheme.primaryAccent.withValues(alpha: 0.5)))
+              : ListView.builder(
+                  itemCount: _searchResults.length,
+                  itemBuilder: (context, index) {
+                    final track = _searchResults[index];
+                    return _trackTile(
+                      track,
+                      trailing: IconButton(
+                        icon: Icon(Icons.more_vert, color: widget.activeTheme.primaryAccent),
+                        onPressed: () => _showTrackMenu(track),
+                      ),
+                      onTap: () => _playTrack(track, playlist: null),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQueueTab() {
+    final current = _currentTrack;
+    return ListView(
+      children: [
+        _sectionLabel('Now playing'),
+        if (current == null)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            child: Text('Nothing playing.', style: TextStyle(color: Colors.grey)),
+          )
+        else
+          _trackTile(current, highlighted: true, onTap: _openFullPlayerScreen),
+        _sectionLabel('Up next'),
+        if (_queue.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            child: Text(
+              'The queue is empty.\nUse the ⋮ menu on any track and choose Add to Queue.',
+              style: TextStyle(color: Colors.grey),
+            ),
+          )
+        else
+          for (var i = 0; i < _queue.length; i++)
+            _trackTile(
+              _queue[i],
+              trailing: IconButton(
+                icon: Icon(Icons.close, color: widget.activeTheme.primaryAccent),
+                onPressed: () {
+                  setState(() => _queue.removeAt(i));
+                  _invalidateAppended();
+                  _syncNav();
+                },
+              ),
+              onTap: () {
+                final t = _queue[i];
+                setState(() => _queue.removeRange(0, i + 1));
+                _playTrack(t, showScreen: false, isFromQueue: true);
+              },
+            ),
+      ],
+    );
+  }
+
+  Widget _buildTabBar() {
+    Widget item(IconData icon, String label, int index) {
+      final on = _tabIndex == index;
+      final color = on ? widget.activeTheme.primaryAccent : widget.activeTheme.textSecondary;
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() {
+          if (index == 0 && _tabIndex == 0) {
+            _selectedPlaylistDetail = null;
+            _isEditingOrder = false;
+            _selectedForReorder.clear();
+          }
+          _tabIndex = index;
+        }),
+        child: Container(
+          width: 92,
+          height: 48,
+          decoration: BoxDecoration(
+            color: on ? widget.activeTheme.primaryAccent.withValues(alpha: 0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 22, color: color),
+              const SizedBox(height: 2),
+              Text(label, style: TextStyle(fontSize: 11, color: color)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 10, top: 2),
+        child: Center(
+          child: Container(
+            width: 320,
+            height: 62,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: widget.activeTheme.surface,
+              borderRadius: BorderRadius.circular(31),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6)),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                item(Icons.library_music, 'Playlists', 0),
+                item(Icons.search, 'Search', 1),
+                item(Icons.queue_music, 'Queue', 2),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    String title;
+    if (_tabIndex == 0) {
+      title = _selectedPlaylistDetail?.name ?? 'My Playlists';
+    } else if (_tabIndex == 2) {
+      title = 'Queue';
+    } else {
+      title = 'Search Music';
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_currentView == 'search'
-            ? 'Search Music'
-            : _currentView == 'playlists'
-                ? 'My Playlists'
-                : _selectedPlaylistDetail?.name ?? 'Playlist'),
+        title: Text(title),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        actions: [
+          if (_tabIndex == 0 && _selectedPlaylistDetail == null)
+            IconButton(
+              icon: Icon(Icons.add, color: widget.activeTheme.primaryAccent),
+              onPressed: () => _showCreatePlaylistDialog(context),
+            ),
+        ],
       ),
       drawer: Drawer(
         backgroundColor: widget.activeTheme.surface,
@@ -931,32 +1127,6 @@ class _MainDashboardState extends State<MainDashboard> {
                 ],
               ),
             ),
-            ListTile(
-              leading: Icon(Icons.home, color: widget.activeTheme.textPrimary),
-              title: const Text('Home / Search'),
-              onTap: () {
-                Navigator.pop(context);
-                setState(() => _currentView = 'search');
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.playlist_play, color: widget.activeTheme.textPrimary),
-              title: const Text('My Playlists'),
-              subtitle: Text('${_myPlaylists.length} playlists created', style: TextStyle(color: widget.activeTheme.textSecondary)),
-              onTap: () {
-                Navigator.pop(context);
-                setState(() => _currentView = 'playlists');
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.add_box, color: widget.activeTheme.primaryAccent),
-              title: const Text('Create New Playlist'),
-              onTap: () {
-                Navigator.pop(context);
-                _showCreatePlaylistDialog(context);
-              },
-            ),
-            const Divider(color: Colors.grey),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
               child: Material(
@@ -966,7 +1136,7 @@ class _MainDashboardState extends State<MainDashboard> {
                 child: Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: widget.activeTheme.primaryAccent.withOpacity(0.3)),
+                    border: Border.all(color: widget.activeTheme.primaryAccent.withValues(alpha: 0.3)),
                   ),
                   child: Theme(
                     data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
@@ -1001,6 +1171,17 @@ class _MainDashboardState extends State<MainDashboard> {
                 ),
               ),
             ),
+            const Spacer(),
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Text(
+                  _version.isEmpty ? '' : 'Version $_version',
+                  style: TextStyle(color: widget.activeTheme.textSecondary, fontSize: 13),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -1014,6 +1195,7 @@ class _MainDashboardState extends State<MainDashboard> {
               activeTheme: widget.activeTheme,
               onTap: _openFullPlayerScreen,
             ),
+          if (MediaQuery.viewInsetsOf(context).bottom == 0) _buildTabBar(),
         ],
       ),
     );
