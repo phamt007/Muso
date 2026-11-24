@@ -104,6 +104,7 @@ class _MainDashboardState extends State<MainDashboard> {
   Track? _preloadedNextTrack;
   String? _preloadedNextUrl;
   DateTime? _lastPrevTap;
+  final List<Track> _history = [];
 
   Track? _currentTrack;
   Playlist? _activePlaylist;
@@ -165,6 +166,7 @@ class _MainDashboardState extends State<MainDashboard> {
       _preloadedNextTrack = null;
       _preloadedNextUrl = null;
 
+      _pushHistory();
       setState(() {
         _currentTrack = next;
         if (_queue.isNotEmpty && _queue.first.id == next.id) {
@@ -284,7 +286,16 @@ class _MainDashboardState extends State<MainDashboard> {
   void _toggleShuffle(bool value) {
     _shuffleNotifier.value = value;
     _shuffleNext = null;
+    if (!value) _history.clear();
     _invalidateAppended();
+  }
+
+  void _pushHistory() {
+    final current = _currentTrack;
+    if (!_isShuffling || current == null) return;
+    if (_history.isNotEmpty && _history.last.id == current.id) return;
+    _history.add(current);
+    if (_history.length > 50) _history.removeAt(0);
   }
 
   Future<void> _preloadNextTrack() async {
@@ -316,16 +327,18 @@ class _MainDashboardState extends State<MainDashboard> {
   void _playNextTrack() {
     final next = _computeNextTrack();
     if (next == null) return;
+    _pushHistory();
     if (_queue.isNotEmpty && _queue.first.id == next.id) {
       _queue.removeAt(0);
-      _playTrack(next, showScreen: false, isFromQueue: true);
+      _playTrack(next, showScreen: false, isFromQueue: true, isNavigation: true);
     } else {
-      _playTrack(next, playlist: _activePlaylist, showScreen: false);
+      _playTrack(next, playlist: _activePlaylist, showScreen: false, isNavigation: true);
     }
   }
 
   Track? _computePreviousTrack() {
     if (_activePlaylist == null || _playlistAnchor == null) return null;
+    if (_isShuffling) return _history.isNotEmpty ? _history.last : null;
     final tracks = _activePlaylist!.tracks;
     final i = tracks.indexWhere((t) => t.id == _playlistAnchor!.id);
     return i > 0 ? tracks[i - 1] : null;
@@ -343,7 +356,8 @@ class _MainDashboardState extends State<MainDashboard> {
 
     if ((tappedTwice || nearStart) && prev != null) {
       _lastPrevTap = null;
-      _playTrack(prev, playlist: _activePlaylist, showScreen: false);
+      if (_isShuffling && _history.isNotEmpty) _history.removeLast();
+      _playTrack(prev, playlist: _activePlaylist, showScreen: false, isNavigation: true);
       return;
     }
 
@@ -354,8 +368,10 @@ class _MainDashboardState extends State<MainDashboard> {
       {Playlist? playlist,
       bool showScreen = true,
       bool isFromQueue = false,
-      bool retried = false}) async {
+      bool retried = false,
+      bool isNavigation = false}) async {
     final myId = ++_playRequestId;
+    if (!isNavigation) _history.clear();
     _shuffleNext = null;
     _appendedNext = null;
 
@@ -405,7 +421,8 @@ class _MainDashboardState extends State<MainDashboard> {
             playlist: playlist,
             showScreen: showScreen,
             isFromQueue: isFromQueue,
-            retried: true);
+            retried: true,
+            isNavigation: isNavigation);
       }
 
       if (!showScreen && ++_consecutiveFailures <= 3) {
@@ -464,7 +481,7 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-  void _showTrackMenu(Track track) {
+  void _showTrackMenu(Track track, {Playlist? fromPlaylist}) {
     showModalBottomSheet(
       context: context,
       backgroundColor: widget.activeTheme.surface,
@@ -490,13 +507,14 @@ class _MainDashboardState extends State<MainDashboard> {
                 },
               ),
 
-              if (_myPlaylists.contains(track)) ...[
+              if (fromPlaylist != null && fromPlaylist.tracks.any((t) => t.id == track.id)) ...[
                 ListTile(
                   leading: Icon(Icons.delete, color: widget.activeTheme.primaryAccent),
                   title: Text('Delete Track from Playlist', style: TextStyle(color: widget.activeTheme.primaryAccent, fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(bottomSheetContext);
-                    setState(() => _myPlaylists.remove(track));
+                    setState(() => fromPlaylist.tracks.removeWhere((t) => t.id == track.id));
+                    if (identical(fromPlaylist, _activePlaylist)) _invalidateAppended();
                     _storage.savePlaylists(_myPlaylists);
                     _syncNav();
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Track deleted from playlist')));
@@ -735,7 +753,7 @@ class _MainDashboardState extends State<MainDashboard> {
                         child: Text('$selectIndex', style: TextStyle(color: widget.activeTheme.surface, fontWeight: FontWeight.bold, fontSize: 12)),
                       )
                     : const Icon(Icons.circle_outlined, color: Colors.grey))
-                : IconButton(icon: const Icon(Icons.more_vert), onPressed: () => _showTrackMenu(track)),
+                : IconButton(icon: const Icon(Icons.more_vert), onPressed: () => _showTrackMenu(track, fromPlaylist: _selectedPlaylistDetail)),
             onTap: () {
               if (_isEditingOrder) {
                 setState(() {
